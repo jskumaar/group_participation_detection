@@ -1,0 +1,3 @@
+codes/insta360/sdk/*
+!codes/insta360/sdk/.gitkeep
+codes/insta360/build/*

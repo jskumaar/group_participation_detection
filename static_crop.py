@@ -4,16 +4,7 @@ import numpy as np
 import os
 
 
-model = YOLO('yolov8s.pt')
 
-
-
-# this is trimmed ideo of Insta360 mp4. just used for testing, only first 30 sec. 
-video_path = 'trimmed_test.mp4'
-cap = cv2.VideoCapture(video_path)
-
-fps = int(cap.get(cv2.CAP_PROP_FPS))
-frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
 
 
@@ -21,68 +12,81 @@ frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 #can stitch this images together to create a singled view of that person 
 person_tracks = {}        
 
-#stores each person's cropping pts mapped to by id
+#stores each person's cropping pts mapped to by id. cropping points  = bbox coords 
 person_loc = {}
 
+
+def crop_vid(model, cap, standard_size, video_path):
 # init each persons list as empty and cropping pts as (-1,-1,-1,-1)
-i = 1
-while i <4:
-    person_tracks[i] = []
-    person_loc[i] = (-1,-1,-1,-1)
-    i+=1
+    i = 1
+    while i <4:
+        person_tracks[i] = []
+        person_loc[i] = (-1,-1,-1,-1)
+        i+=1
 
 
 
 
-# output ideo will b4 640 x 480 for each person
-standard_size = (640, 480)
+    # output ideo will b4 640 x 480 for each person
+    standard_size = (640, 480)
 
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-    results = model.track(frame, persist=True, classes=[0], tracker="bytetrack.yaml")
+        results = model.track(frame, persist=True, classes=[0], tracker="bytetrack.yaml")
 
-    if results[0].boxes.id is None:
-        continue
-
-    boxes = results[0].boxes.xyxy.cpu().numpy()
-    ids = results[0].boxes.id.cpu().numpy().astype(int)
-
-    for box, person_id in zip(boxes, ids):
-
-        # sometimes detecting chair as object, so only first 3 ids  = people 
-        if person_id > 3:
+        if results[0].boxes.id is None:
             continue
 
+        boxes = results[0].boxes.xyxy.cpu().numpy()
+        ids = results[0].boxes.id.cpu().numpy().astype(int)
 
-        #cropping based off only locations on first frame, not dynamic 
+        for box, person_id in zip(boxes, ids):
 
-        # if first frame, store cropping pts 
-        if person_loc[person_id] == (-1,-1,-1,-1):
-            x1, y1, x2, y2 = box.astype(int)
-            person_loc[person_id] = x1, y1, x2, y2
+            # sometimes detecting chair as object, so only first 3 ids  = people 
+            if person_id > 3:
+                continue
 
-        
-        x1, y1, x2, y2 = person_loc[person_id]
-        cropped = frame[y1:y2, x1:x2]
-        resized_crop = cv2.resize(cropped, standard_size)
-        person_tracks[person_id].append(resized_crop)
+
+            #cropping based off only locations on first frame, not dynamic 
+
+            # if first frame, store cropping pts 
+            if person_loc[person_id] == (-1,-1,-1,-1):
+                x1, y1, x2, y2 = box.astype(int)
+                person_loc[person_id] = x1, y1, x2, y2
 
             
-        
+            x1, y1, x2, y2 = person_loc[person_id]
+            cropped = frame[y1:y2, x1:x2]
+            resized_crop = cv2.resize(cropped, standard_size)
+            person_tracks[person_id].append(resized_crop)
 
-        
+                
+            
 
-cap.release()
+            
+
+    cap.release()
+    return person_tracks
 
 # Save each person's video
-fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-for idx, (person_id, frames) in enumerate(person_tracks.items()):
-    if not frames:
-        continue
-    out = cv2.VideoWriter(f'static_output_person_{idx}.mp4', fourcc, fps, standard_size)
-    for f in frames:
-        out.write(f)
-    out.release()
+def save_vids(fps, standard_size, person_tracks):
+    video_paths = {}
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    for idx, (person_id, frames) in enumerate(person_tracks.items()):
+        if not frames:
+            continue
+        out = cv2.VideoWriter(f'static_output_person_{person_id}.mp4', fourcc, fps, standard_size)
+        video_paths[person_id] = (f'static_output_person_{person_id}.mp4')
+        for f in frames:
+            out.write(f)
+        out.release()
+    return video_paths
+
+def get_bbox(person_id):
+    return person_loc[person_id]
+
+
+

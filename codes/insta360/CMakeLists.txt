@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 # SDK Includes
 include_directories(
   ${CMAKE_SOURCE_DIR}/sdk/CameraSDK/include
-  ${CMAKE_SOURCE_DIR}/sdk/MediaSDK/include/stitcher
+  ${CMAKE_SOURCE_DIR}/sdk/MediaSDK/include
 )
 
 # SDK Libs

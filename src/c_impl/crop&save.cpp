@@ -1,3 +1,14 @@
+// before running this file, create a conda enviornment and use python version 3.10 and run following command:    
+// pip install torch==1.11.0 torchvision==0.12.0
+
+
+// then run 
+//python export.py --weights yolov5.pt --include onnx --opset 12
+
+// resulting onnx version of model is what to use. 
+
+
+
 #include <opencv2/opencv.hpp>
 #include <fstream>
 #include <iostream>

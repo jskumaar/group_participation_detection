@@ -11,9 +11,13 @@ bool OpNetTracker::initialize() {
         session_options.SetInterOpNumThreads(2);
         session_options.SetIntraOpNumThreads(1);
         allocator_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+
         fs::path exe_dir = fs::current_path().parent_path().parent_path();
         std::string model_path = (exe_dir / "models" / "head-localizer.onnx").string();
-        localizer = Ort::Session(env, model_path.c_str(), session_options);
+        localizer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
+
+
+        
         model_path = (exe_dir / "models" / "head-pose-0.3-big-quantized.onnx").string();
         posenet = Ort::Session(env, model_path.c_str(), session_options);
     }

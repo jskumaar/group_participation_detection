@@ -24,7 +24,7 @@ class Localizer
         inline static constexpr int INPUT_IMG_HEIGHT = 224;
         Ort::Session session_{nullptr};
         // Inputs / outputs
-        cv::Mat scaled_frame_{}, input_mat_{};
+        cv::Mat scaled_frame_, input_mat_;
         Ort::Value input_val_{nullptr}, output_val_{nullptr};
         std::array<float, 5> results_;
         double last_inference_time_ = 0;
@@ -60,7 +60,6 @@ class PoseEstimator
     private:
         std::string get_network_input_name(size_t i) const;
         std::string get_network_output_name(size_t i) const;
-        int64_t model_version_ = 0;  // Queried meta data from the ONNX file
         Ort::Session session_{nullptr};  // ONNX's runtime context for running the model
         mutable Ort::Allocator allocator_;   // Memory allocator for tensors
         // Inputs
@@ -83,3 +82,5 @@ class PoseEstimator
         bool has_uncertainty_ = false;
         bool pos_scale_uncertainty_is_matrix_ = false;
 };
+
+

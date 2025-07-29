@@ -13,4 +13,5 @@ class OPNetTracker {
         bool initialize();
         Ort::Env env{nullptr};
         Ort::MemoryInfo allocator_info_{nullptr};
+        std::optional<Localizer> localizer_;
 }

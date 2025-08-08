@@ -7,6 +7,7 @@ class PanoViewer {
 private:
     cv::VideoCapture cap;
     cv::Mat pano_frame;
+    OPNetTracker tracker;
     
     // View parameters
     float yaw = 0.0f;        // Horizontal rotation (left/right)
@@ -26,34 +27,21 @@ private:
     const float PI = 3.14159265359f;
     const float DEG_TO_RAD = PI / 180.0f;
 
+
+
+
 public:
     PanoViewer() {
         // Try to open camera input 1 (change to 0 if needed)
-        cap.open(2);
+        cap.open(1);
         if (!cap.isOpened()) {
             std::cerr << "Error: Cannot open camera input 1. Trying input 0..." << std::endl;
-            cap.open(0);
-            if (!cap.isOpened()) {
-                std::cerr << "Error: Cannot open any camera input!" << std::endl;
-                return;
-            }
         }
         
         // Set camera properties for better quality
         cap.set(cv::CAP_PROP_FRAME_WIDTH, 1920);
         cap.set(cv::CAP_PROP_FRAME_HEIGHT, 960);
         cap.set(cv::CAP_PROP_FPS, 30);
-        
-        std::cout << "Camera opened successfully!" << std::endl;
-        std::cout << "Controls:" << std::endl;
-        std::cout << "- Mouse: Click and drag to pan around" << std::endl;
-        std::cout << "- Mouse Wheel: Zoom in/out" << std::endl;
-        std::cout << "- WASD: Pan around" << std::endl;
-        std::cout << "- Q/E: Zoom in/out" << std::endl;
-        std::cout << "- R: Reset view" << std::endl;
-        std::cout << "- ESC: Exit" << std::endl;
-
-        OPNetTracker tracker;
     }
     
     ~PanoViewer() {
@@ -156,91 +144,93 @@ public:
         
         return output;
     }
+
+
     
     // Mouse callback function
-    static void onMouse(int event, int x, int y, int flags, void* userdata) {
-        PanoViewer* viewer = static_cast<PanoViewer*>(userdata);
-        viewer->handleMouse(event, x, y, flags);
-    }
+    // static void onMouse(int event, int x, int y, int flags, void* userdata) {
+    //     PanoViewer* viewer = static_cast<PanoViewer*>(userdata);
+    //     viewer->handleMouse(event, x, y, flags);
+    // }
     
-    void handleMouse(int event, int x, int y, int flags) {
-        switch (event) {
-            case cv::EVENT_LBUTTONDOWN:
-                mouse_pressed = true;
-                last_mouse_x = x;
-                last_mouse_y = y;
-                break;
+    // void handleMouse(int event, int x, int y, int flags) {
+    //     switch (event) {
+    //         case cv::EVENT_LBUTTONDOWN:
+    //             mouse_pressed = true;
+    //             last_mouse_x = x;
+    //             last_mouse_y = y;
+    //             break;
                 
-            case cv::EVENT_LBUTTONUP:
-                mouse_pressed = false;
-                break;
+    //         case cv::EVENT_LBUTTONUP:
+    //             mouse_pressed = false;
+    //             break;
                 
-            case cv::EVENT_MOUSEMOVE:
-                if (mouse_pressed) {
-                    float dx = x - last_mouse_x;
-                    float dy = y - last_mouse_y;
+    //         case cv::EVENT_MOUSEMOVE:
+    //             if (mouse_pressed) {
+    //                 float dx = x - last_mouse_x;
+    //                 float dy = y - last_mouse_y;
                     
-                    // Adjust sensitivity
-                    yaw -= dx * 0.5f;
-                    pitch += dy * 0.5f;
+    //                 // Adjust sensitivity
+    //                 yaw -= dx * 0.5f;
+    //                 pitch += dy * 0.5f;
                     
-                    // Clamp pitch to prevent flipping
-                    pitch = std::max(-89.0f, std::min(89.0f, pitch));
+    //                 // Clamp pitch to prevent flipping
+    //                 pitch = std::max(-89.0f, std::min(89.0f, pitch));
                     
-                    // Normalize yaw
-                    while (yaw > 180.0f) yaw -= 360.0f;
-                    while (yaw < -180.0f) yaw += 360.0f;
+    //                 // Normalize yaw
+    //                 while (yaw > 180.0f) yaw -= 360.0f;
+    //                 while (yaw < -180.0f) yaw += 360.0f;
                     
-                    last_mouse_x = x;
-                    last_mouse_y = y;
-                }
-                break;
+    //                 last_mouse_x = x;
+    //                 last_mouse_y = y;
+    //             }
+    //             break;
                 
-            case cv::EVENT_MOUSEWHEEL:
-                if (cv::getMouseWheelDelta(flags) > 0) {
-                    fov = std::max(10.0f, fov - 5.0f);  // Zoom in
-                } else {
-                    fov = std::min(120.0f, fov + 5.0f); // Zoom out
-                }
-                break;
-        }
-    }
+    //         case cv::EVENT_MOUSEWHEEL:
+    //             if (cv::getMouseWheelDelta(flags) > 0) {
+    //                 fov = std::max(10.0f, fov - 5.0f);  // Zoom in
+    //             } else {
+    //                 fov = std::min(120.0f, fov + 5.0f); // Zoom out
+    //             }
+    //             break;
+    //     }
+    // }
     
-    void handleKeyboard(char key) {
-        float pan_speed = 2.0f;
-        float zoom_speed = 3.0f;
+    // void handleKeyboard(char key) {
+    //     float pan_speed = 2.0f;
+    //     float zoom_speed = 3.0f;
         
-        switch (key) {
-            case 'w': case 'W':
-                pitch = std::max(-89.0f, pitch - pan_speed);
-                break;
-            case 's': case 'S':
-                pitch = std::min(89.0f, pitch + pan_speed);
-                break;
-            case 'a': case 'A':
-                yaw -= pan_speed;
-                break;
-            case 'd': case 'D':
-                yaw += pan_speed;
-                break;
-            case 'q': case 'Q':
-                fov = std::max(10.0f, fov - zoom_speed);
-                break;
-            case 'e': case 'E':
-                fov = std::min(120.0f, fov + zoom_speed);
-                break;
-            case 'r': case 'R':
-                // Reset view
-                yaw = 0.0f;
-                pitch = 0.0f;
-                fov = 90.0f;
-                break;
-        }
+    //     switch (key) {
+    //         case 'w': case 'W':
+    //             pitch = std::max(-89.0f, pitch - pan_speed);
+    //             break;
+    //         case 's': case 'S':
+    //             pitch = std::min(89.0f, pitch + pan_speed);
+    //             break;
+    //         case 'a': case 'A':
+    //             yaw -= pan_speed;
+    //             break;
+    //         case 'd': case 'D':
+    //             yaw += pan_speed;
+    //             break;
+    //         case 'q': case 'Q':
+    //             fov = std::max(10.0f, fov - zoom_speed);
+    //             break;
+    //         case 'e': case 'E':
+    //             fov = std::min(120.0f, fov + zoom_speed);
+    //             break;
+    //         case 'r': case 'R':
+    //             // Reset view
+    //             yaw = 0.0f;
+    //             pitch = 0.0f;
+    //             fov = 90.0f;
+    //             break;
+    //     }
         
-        // Normalize yaw
-        while (yaw > 180.0f) yaw -= 360.0f;
-        while (yaw < -180.0f) yaw += 360.0f;
-    }
+    //     // Normalize yaw
+    //     while (yaw > 180.0f) yaw -= 360.0f;
+    //     while (yaw < -180.0f) yaw += 360.0f;
+    // }
     
     void run() {
         if (!cap.isOpened()) {
@@ -248,8 +238,7 @@ public:
             return;
         }
         
-        cv::namedWindow("360° Viewer", cv::WINDOW_AUTOSIZE);
-        cv::setMouseCallback("360° Viewer", onMouse, this);
+        // cv::setMouseCallback("360° Viewer", onMouse, this);
         
         while (true) {
             cap >> pano_frame;
@@ -265,23 +254,33 @@ public:
                          << pano_frame.cols << "x" << pano_frame.rows << std::endl;
             }
             
+            auto people = tracker.detect_people_in_frame(pano_frame);
+            cv::imshow("test", pano_frame);
             // Generate perspective view
-            cv::Mat perspective_view = generatePerspectiveView(pano_frame);
-            rotation_output pose = tracker.run(perspective_view);
-            printf("Yaw: %.2f, Pitch: %.2f, Roll: %.2f\n", pose.yaw, pose.pitch, pose.roll);
+            // int person_id = 0;  // Counter for unique window names
+            // for(const cv::Rect& person : people){
+            //     printf("coord: (%d, %d, %d, %d)\n", person.x, person.y, person.width, person.height);
+            //     yaw = ((person.x + person.width / 2) * 0.125) - 180.0;
+            //     cv::Mat perspective_view = generatePerspectiveView(pano_frame);
+            //     rotation_output pose = tracker.run(perspective_view);
+            //     printf("Person %d: ", person_id);
+            //     printf("Yaw: %.2f, Pitch: %.2f, Roll: %.2f\n", pose.yaw, pose.pitch, pose.roll);
+            //     std::string status = "Yaw: " + std::to_string((int)yaw) + 
+            //         "° Pitch: " + std::to_string((int)pitch) + 
+            //         "° FOV: " + std::to_string((int)fov) + "°";
+            //     cv::putText(perspective_view, status, cv::Point(10, 30), 
+            //             cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 255), 2);
+            //     // Create unique window name for each person
+            //     std::string window_name = "Person " + std::to_string(person_id) + " - 360° Viewer";
+            //     cv::imshow(window_name, perspective_view);
+            //     person_id++;
+            // }
             // Add status overlay
-            std::string status = "Yaw: " + std::to_string((int)yaw) + 
-                               "° Pitch: " + std::to_string((int)pitch) + 
-                               "° FOV: " + std::to_string((int)fov) + "°";
-            cv::putText(perspective_view, status, cv::Point(10, 30), 
-                       cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 255), 2);
-            
-            cv::imshow("360° Viewer", perspective_view);
             // Handle keyboard input
             char key = cv::waitKey(1) & 0xFF;
             if (key == 27) break; // ESC to exit
             
-            handleKeyboard(key);
+            // handleKeyboard(key);
         }
         
         cv::destroyAllWindows();

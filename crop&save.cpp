@@ -34,7 +34,6 @@ struct PersonTrack {
     int id;
     Rect box;
     VideoWriter writer;
-    
 };
 
 // Preprocess frame.
@@ -89,9 +88,9 @@ vector<Detection> post_process(Mat& input_image, vector<Mat>& outputs) {
 
 int main() {
     std::cout << "main called dawg \n";
-    Net net = readNet("yolov5/yolov5s.onnx");
+    Net net = readNet("models/yolov5s.onnx");
 
-    string vid_path = "/Applications/demo_1_3_min.mp4"
+    string vid_path = "C:/Users/navee/Downloads/demo_1_stitched.mp4";
     VideoCapture cap(vid_path);
     if (!cap.isOpened()) {
         cerr << "Error: Could not open video file." << endl;

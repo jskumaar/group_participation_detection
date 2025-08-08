@@ -358,3 +358,22 @@ std::optional<PoseEstimator::Face> PoseEstimator::run(
         rotation, rotaxis_scales_tril, outbox, center, size, center_size_cov_tril
     });
 }
+
+Reframer::Reframer(Ort::MemoryInfo &allocator_info,
+                   Ort::Session &&session)
+    : session_(std::move(session))
+{
+    // Initialize input/output names and values
+    input_names_ = {"input"};
+    output_names_ = {"output"};
+    input_val_.resize(input_names_.size());
+    output_val_.resize(output_names_.size());
+}
+
+std::vector<cv::Rect> Reframer::run(const cv::Mat &frame)
+{
+    // Preprocess the frame and run the model
+    // ...
+
+    return {};
+}

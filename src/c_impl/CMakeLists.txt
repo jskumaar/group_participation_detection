@@ -21,9 +21,10 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 set(SOURCES
   model_core.cpp
   tracker.cpp
-  model_test.cpp
-  # webcam_mode.cpp
+  webcam_mode.cpp
 )
+
+
 
 # Executable
 add_executable(${PROJECT_NAME} ${SOURCES})

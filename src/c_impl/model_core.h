@@ -87,4 +87,15 @@ class PoseEstimator
         bool pos_scale_uncertainty_is_matrix_ = false;
 };
 
+class Reframer
+{
+    public:
+        Reframer(Ort::MemoryInfo &allocator_info,
+                 Ort::Session &&session);
+        std::vector<cv::Rect> run(const cv::Mat &frame);
+    private:
+        Ort::Session session_{nullptr}; 
+        cv::Mat scaled_frame_{}, input_mat_{}; 
+};
+
 

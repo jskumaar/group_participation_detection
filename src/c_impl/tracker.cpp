@@ -10,6 +10,9 @@ OPNetTracker::OPNetTracker(){
         std::cerr << "Failed to initialize OPNetTracker." << std::endl;
         exit(1);
     }
+    fs::path exe_dir = fs::current_path().parent_path().parent_path();
+    std::string yolo_path = (exe_dir / "models" / "yolov5s.onnx").string();
+    net = cv::dnn::readNet(yolo_path.c_str());
 }
 
 bool OPNetTracker::initialize() {
@@ -123,4 +126,80 @@ rotation_output OPNetTracker::detect(){
     constexpr double rad2deg = 180/M_PI;
 
     return {(float)(yaw*rad2deg), (float)(pitch*rad2deg), (float)(roll*-rad2deg)};
+}
+
+std::vector<cv::Mat> OPNetTracker::pre_process(const cv::Mat& input_image) {
+    cv::Mat blob;
+    cv::dnn::blobFromImage(input_image, blob, 1. / 255., cv::Size(INPUT_WIDTH, INPUT_HEIGHT), cv::Scalar(), true, false);
+    net.setInput(blob);
+
+    std::vector<cv::Mat> outputs;
+    net.forward(outputs, net.getUnconnectedOutLayersNames());
+    return outputs;
+}
+
+// Postprocess outputs — no class name vector needed
+std::vector<Detection> OPNetTracker::post_process(const cv::Mat& input_image, std::vector<cv::Mat>& outputs) {
+    std::vector<Detection> results;
+    float x_factor = input_image.cols / INPUT_WIDTH;
+    float y_factor = input_image.rows / INPUT_HEIGHT;
+    float* data = (float*)outputs[0].data;
+
+    const int dimensions = 85;  // x, y, w, h, obj_conf, 80 class scores
+    const int rows = 25200;
+
+    for (int i = 0; i < rows; ++i) {
+        float confidence = data[4];
+        if (confidence >= CONFIDENCE_THRESHOLD) {
+            float* classes_scores = data + 5;
+            cv::Point class_id;
+            double max_class_score;
+            cv::minMaxLoc(cv::Mat(1, 80, CV_32FC1, classes_scores), 0, &max_class_score, 0, &class_id);
+            if (max_class_score > SCORE_THRESHOLD) {
+                int id = class_id.x;
+                if (id == 0) {  // Only keep people
+                    float cx = data[0];
+                    float cy = data[1];
+                    float w = data[2];
+                    float h = data[3];
+                    int left = int((cx - 0.5 * w) * x_factor);
+                    int top = int((cy - 0.5 * h) * y_factor);
+                    int width = int(w * x_factor);
+                    int height = int(h * y_factor);
+
+                    results.push_back({ cv::Rect(left, top, width, height), confidence, id});
+                }
+            }
+        }
+        data += dimensions;
+    }
+
+    return results;
+}
+
+std::vector<cv::Rect> OPNetTracker::detect_people_in_frame(const cv::Mat &frame) {
+    std::vector<cv::Mat> detections = pre_process(frame);
+    std::vector<Detection> people = post_process(frame, detections);
+
+    // Prepare for NMS
+    std::vector<cv::Rect> boxes;
+    std::vector<float> confidences;
+    for (const auto &det : people) {
+        boxes.push_back(det.box);
+        confidences.push_back(det.confidence);
+    }
+
+    // Apply NMS
+    std::vector<int> indices;
+    cv::dnn::NMSBoxes(boxes, confidences, CONFIDENCE_THRESHOLD, NMS_THRESHOLD, indices);
+
+    // Gather final boxes
+    std::vector<cv::Rect> final_boxes;
+    for (int idx : indices) {
+        final_boxes.push_back(boxes[idx]);
+    }
+
+    std::cout << "Detected " << final_boxes.size() << " people." << std::endl;
+
+    return final_boxes;
 }

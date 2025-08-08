@@ -1,6 +1,7 @@
 #include <opencv2/opencv.hpp>
 #include <iostream>
 #include <cmath>
+#include "tracker.h"
 
 class PanoViewer {
 private:
@@ -51,6 +52,8 @@ public:
         std::cout << "- Q/E: Zoom in/out" << std::endl;
         std::cout << "- R: Reset view" << std::endl;
         std::cout << "- ESC: Exit" << std::endl;
+
+        OPNetTracker tracker;
     }
     
     ~PanoViewer() {
@@ -264,7 +267,8 @@ public:
             
             // Generate perspective view
             cv::Mat perspective_view = generatePerspectiveView(pano_frame);
-            
+            rotation_output pose = tracker.run(perspective_view);
+            printf("Yaw: %.2f, Pitch: %.2f, Roll: %.2f\n", pose.yaw, pose.pitch, pose.roll);
             // Add status overlay
             std::string status = "Yaw: " + std::to_string((int)yaw) + 
                                "° Pitch: " + std::to_string((int)pitch) + 
@@ -273,7 +277,6 @@ public:
                        cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 255), 2);
             
             cv::imshow("360° Viewer", perspective_view);
-            
             // Handle keyboard input
             char key = cv::waitKey(1) & 0xFF;
             if (key == 27) break; // ESC to exit

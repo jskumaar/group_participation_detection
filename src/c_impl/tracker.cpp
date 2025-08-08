@@ -1,28 +1,39 @@
 #include "tracker.h"
 
+#define M_PI 3.14159265358979323846
+
 
 namespace fs = std::filesystem;
 
+OPNetTracker::OPNetTracker(){
+    if(!initialize()) {
+        std::cerr << "Failed to initialize OPNetTracker." << std::endl;
+        exit(1);
+    }
+}
 
-bool OpNetTracker::initialize() {
+bool OPNetTracker::initialize() {
     try{
-        env(ORT_LOGGING_LEVEL_ERROR, "opnet-tracker");
+        env = Ort::Env(ORT_LOGGING_LEVEL_WARNING, "opnet-tracker");
         Ort::SessionOptions session_options;
         session_options.SetInterOpNumThreads(2);
         session_options.SetIntraOpNumThreads(1);
         allocator_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-
         fs::path exe_dir = fs::current_path().parent_path().parent_path();
-        std::string model_path = (exe_dir / "models" / "head-localizer.onnx").string();
+        std::wstring model_path = (exe_dir / L"models" / L"head-localizer.onnx").wstring();
         localizer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
-
-
-        
-        model_path = (exe_dir / "models" / "head-pose-0.3-big-quantized.onnx").string();
-        posenet = Ort::Session(env, model_path.c_str(), session_options);
+        model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").wstring();
+        poseestimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
     }
-    catch (const Ort::Exception& e) {
-        std::cerr << "Ort::Exception: " << e.what() << std::endl;
+    catch (const Ort::Exception &e)
+    {
+        std::cerr << "Failed to initialize the neural network models. ONNX error message: "
+            << e.what() << std::endl;
+        return false;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "Failed to initialize the neural network models. Error message: " << e.what() << std::endl;
         return false;
     }
     return true;
@@ -30,125 +41,86 @@ bool OpNetTracker::initialize() {
 
 
 
-
-float to_degrees(float rad) {
-    return rad * 180.0f / static_cast<float>(CV_PI);
+cv::Quatf image_to_world(cv::Quatf q)
+{
+    std::swap(q[1], q[3]);
+    q[1] = -q[1];
+    q[2] = -q[2];
+    q[3] = -q[3];
+    return q;
 }
 
-int main() {
-    env(ORT_LOGGING_LEVEL_WARNING, "opnet-tracker");
-    Ort::SessionOptions session_options;
-    session_options.SetIntraOpNumThreads(1);
-    Ort::MemoryInfo allocator_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-    fs::path exe_dir = fs::current_path().parent_path().parent_path();
-    std::wstring model_path = (exe_dir / L"models" / L"head-localizer.onnx").wstring();
-    Ort::Session localizer(env, model_path.c_str(), session_options);
-    model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").wstring();
-    Ort::Session posenet(env, model_path.c_str(), session_options);
+cv::Rect make_crop_rect_for_aspect(const cv::Size &size, int aspect_w, int aspect_h)
+{
+    auto [w, h] = size;
+    if ( w*aspect_h > aspect_w*h )
+    {
+        // Image is too wide
+        const int new_w = (aspect_w*h)/aspect_h;
+        return cv::Rect((w - new_w)/2, 0, new_w, h);
+    }
+    else
+    {
+        const int new_h = (aspect_h*w)/aspect_w;
+        return cv::Rect(0, (h - new_h)/2, w, new_h);
+    }
+}
+cv::Rect make_crop_rect_multiple_of(const cv::Size &size, int multiple)
+{
+    const int new_w = (size.width / multiple) * multiple;
+    const int new_h = (size.height / multiple) * multiple;
+    return cv::Rect(
+        (size.width-new_w)/2,
+        (size.height-new_h)/2,
+        new_w,
+        new_h
+    );
+}
 
-    cv::VideoCapture cap(0);
-    if (!cap.isOpened()) {
-        std::cerr << "Error: Could not open camera." << std::endl;
-        return 1;
+void OPNetTracker::prepare_input_image(cv::Mat &img){
+    if (img.rows*4 != img.cols*3)
+    {
+        img = img(make_crop_rect_for_aspect(img.size(), 4, 3));
     }
 
-    while (true) {
-        cv::Mat frame, gray;
-        cap >> frame;
-        if (frame.empty()) break;
-        cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
-        cv::resize(gray, gray, cv::Size(288, 224));
-        gray.convertTo(gray, CV_32F, 1.0 / 255);
+    img = img(make_crop_rect_multiple_of(img.size(), 4));
 
-        std::array<int64_t, 4> loc_shape{1, 1, 224, 288};
-        std::vector<float> loc_input(gray.begin<float>(), gray.end<float>());
-        Ort::Value loc_tensor = Ort::Value::CreateTensor<float>(
-            allocator_info, loc_input.data(), loc_input.size(), loc_shape.data(), loc_shape.size());
-
-        Ort::AllocatorWithDefaultOptions allocator;
-        auto loc_input_names = localizer.GetInputNames();
-        auto loc_output_names = localizer.GetOutputNames();
-        const char* loc_input_name = loc_input_names[0].c_str();
-        const char* loc_output_name = loc_output_names[0].c_str();
-        auto loc_output = localizer.Run(Ort::RunOptions{nullptr},
-                                        &loc_input_name, &loc_tensor, 1,
-                                        &loc_output_name, 1);
-        float* loc_data = loc_output[0].GetTensorMutableData<float>();
-        float x = loc_data[0], y = loc_data[1], size = loc_data[2], conf = loc_data[3];
-        
-        // Debug output
-        std::cout << "Localizer output - x: " << x << ", y: " << y << ", size: " << size << ", conf: " << conf << std::endl;
-
-        if (conf < 0.3f) {  // Temporarily lowered threshold for debugging
-            cv::imshow("OPNet Tracker", frame);
-            if (cv::waitKey(1) == 27) break;
-            continue;
-        }
-
-        // Scale coordinates from normalized to pixel coordinates
-        // Assuming the model outputs normalized coordinates (0-1 range)
-        float scaled_x = x * frame.cols;
-        float scaled_y = y * frame.rows;
-        float scaled_size = abs(size) * std::min(frame.cols, frame.rows); // Take absolute value and scale
-        
-        std::cout << "Scaled coordinates - x: " << scaled_x << ", y: " << scaled_y << ", size: " << scaled_size << std::endl;
-
-        cv::Rect roi((int)(scaled_x - scaled_size / 2), (int)(scaled_y - scaled_size / 2), (int)scaled_size, (int)scaled_size);
-        roi &= cv::Rect(0, 0, frame.cols, frame.rows);
-        
-        // Safety check: ensure ROI is valid and not empty
-        if (roi.width <= 0 || roi.height <= 0 || roi.area() == 0) {
-            std::cerr << "Invalid ROI detected: " << roi << std::endl;
-            cv::imshow("OPNet Tracker", frame);
-            if (cv::waitKey(1) == 27) break;
-            continue;
-        }
-        
-        cv::Mat crop = frame(roi).clone();
-        
-        // Additional safety check: ensure crop is not empty
-        if (crop.empty()) {
-            std::cerr << "Empty crop detected" << std::endl;
-            cv::imshow("OPNet Tracker", frame);
-            if (cv::waitKey(1) == 27) break;
-            continue;
-        }
-        
-        cv::resize(crop, crop, cv::Size(112, 112));
-        cv::cvtColor(crop, crop, cv::COLOR_BGR2RGB);
-        crop.convertTo(crop, CV_32F, 1.0 / 255);
-
-        std::array<int64_t, 4> pose_shape{1, 3, 112, 112};
-        std::vector<float> pose_input;
-        for (int c = 0; c < 3; ++c)
-            for (int i = 0; i < 112; ++i)
-                for (int j = 0; j < 112; ++j)
-                    pose_input.push_back(crop.at<cv::Vec3f>(i, j)[c]);
-
-        Ort::Value pose_tensor = Ort::Value::CreateTensor<float>(
-            allocator_info, pose_input.data(), pose_input.size(), pose_shape.data(), pose_shape.size());
-
-        auto pose_input_names = posenet.GetInputNames();
-        auto pose_output_names = posenet.GetOutputNames();
-        const char* pose_input_name = pose_input_names[0].c_str();
-        const char* pose_output_name = pose_output_names[0].c_str();
-
-        auto pose_output = posenet.Run(Ort::RunOptions{nullptr},
-                                       &pose_input_name, &pose_tensor, 1,
-                                       &pose_output_name, 1);
-
-        float* out = pose_output[0].GetTensorMutableData<float>();
-        float yaw = to_degrees(out[0]);
-        float pitch = to_degrees(out[1]);
-        float roll = to_degrees(out[2]);
-
-        std::string label = cv::format("Y: %.1f, P: %.1f, R: %.1f", yaw, pitch, roll);
-        cv::putText(frame, label, {20, 30}, cv::FONT_HERSHEY_SIMPLEX, 0.8, {0, 255, 0}, 2);
-        cv::rectangle(frame, roi, {255, 0, 0}, 2);
-
-        cv::imshow("OPNet Tracker", frame);
-        if (cv::waitKey(1) == 27) break;  // ESC to quit
+        if (img.cols > 640)
+    {
+        cv::pyrDown(img, downsized_original_images_[0]);
+        img = downsized_original_images_[0];
     }
+    if (img.cols > 640)
+    {
+        cv::pyrDown(img, downsized_original_images_[1]);
+        img = downsized_original_images_[1];
+    }
+    cv::cvtColor(img, grayscale, cv::COLOR_BGR2GRAY);
+}
 
-    return 0;
+rotation_output OPNetTracker::run(cv::Mat frame){
+    prepare_input_image(frame);
+
+    return detect();
+}
+
+rotation_output OPNetTracker::detect(){
+    auto [p, rect] = localizer_->run(grayscale);
+    auto face = poseestimator_->run(grayscale, rect);
+    auto pose = image_to_world((*face).rotation);
+    auto rot_mat = pose.toRotMat3x3(cv::QUAT_ASSUME_UNIT);
+
+    const auto& mx = rot_mat.col(0);
+    const auto& my = rot_mat.col(1);
+    const auto& mz = rot_mat.col(2);
+
+    const float yaw = std::atan2(mx(2), mx(0));
+    const float pitch = -std::atan2(-mx(1), std::sqrt(mx(2)*mx(2)+mx(0)*mx(0)));
+    // For the roll angle we recognize that the matrix entries in the second row contain cos(pitch)*cos(roll), and
+    // cos(pitch)*sin(roll). Using atan2 eliminates the common pitch factor and we obtain the roll angle.
+    const float roll = std::atan2(-mz(1), my(1));
+
+    constexpr double rad2deg = 180/M_PI;
+
+    return {(float)(yaw*rad2deg), (float)(pitch*rad2deg), (float)(roll*-rad2deg)};
 }

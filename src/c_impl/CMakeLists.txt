@@ -18,8 +18,15 @@ set(OpenCV_DIR "C:/opencv/build")
 find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
+set(SOURCES
+  model_core.cpp
+  tracker.cpp
+  model_test.cpp
+  # webcam_mode.cpp
+)
+
 # Executable
-add_executable(${PROJECT_NAME} tracker.cpp)
+add_executable(${PROJECT_NAME} ${SOURCES})
 
 # Link libraries
 target_link_libraries(${PROJECT_NAME}

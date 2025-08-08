@@ -1,11 +1,14 @@
-#include <optional>
 #include <array>
 #include <vector>
 #include <string>
-
+#include <optional>
+#include <opencv2/core/quaternion.hpp>
 #include <onnxruntime_cxx_api.h>
 #include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp> 
 
+
+float sigmoid(float x);
 
 class Localizer
 {
@@ -60,6 +63,7 @@ class PoseEstimator
     private:
         std::string get_network_input_name(size_t i) const;
         std::string get_network_output_name(size_t i) const;
+        int64_t model_version_ = 0;  // Queried meta data from the ONNX file
         Ort::Session session_{nullptr};  // ONNX's runtime context for running the model
         mutable Ort::Allocator allocator_;   // Memory allocator for tensors
         // Inputs

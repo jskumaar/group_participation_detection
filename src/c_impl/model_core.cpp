@@ -1,6 +1,99 @@
 #include "model_core.h"
 
 
+cv::Rect2f unnormalize(const cv::Rect2f &r, int h, int w)
+{
+    auto unnorm = [](float x) -> float { return 0.5f*(x+1); };
+    auto tl = r.tl();
+    auto br = r.br();
+    auto x0 = unnorm(tl.x)*w;
+    auto y0 = unnorm(tl.y)*h;
+    auto x1 = unnorm(br.x)*w;
+    auto y1 = unnorm(br.y)*h;
+    return {
+        x0, y0, x1-x0, y1-y0
+    };
+}
+
+float sigmoid(float x)
+{
+    return 1.f/(1.f + std::exp(-x));
+}
+
+template<typename T>
+std::ostream& operator<<(std::ostream& os, const std::vector<T>& vec) {
+    os << "[";
+    for (size_t i = 0; i < vec.size(); ++i) {
+        os << vec[i];
+        if (i < vec.size() - 1) os << ", ";
+    }
+    os << "]";
+    return os;
+}
+
+Ort::Value create_tensor(const Ort::TypeInfo& info, Ort::Allocator& alloc)
+{
+    const auto shape = info.GetTensorTypeAndShapeInfo().GetShape();
+    auto t = Ort::Value::CreateTensor<float>(
+        alloc, shape.data(), shape.size());
+    memset(t.GetTensorMutableData<float>(), 0, sizeof(float)*info.GetTensorTypeAndShapeInfo().GetElementCount());
+    return t;
+}
+
+int find_input_intensity_quantile(const cv::Mat& frame, float percentage)
+{
+    const int channels[] = { 0 };
+    const int hist_size[] = { 256 };
+    float range[] = { 0, 256 };
+    const float* ranges[] = { range };
+    cv::Mat hist;
+    cv::calcHist(&frame, 1,  channels, cv::Mat(), hist, 1, hist_size, ranges, true, false);
+    int gray_level = 0;
+    const int num_pixels_quantile = frame.total()*percentage*0.01f;
+    int num_pixels_accum = 0;
+    for (int i=0; i<hist_size[0]; ++i)
+    {
+        num_pixels_accum += hist.at<float>(i);
+        if (num_pixels_accum > num_pixels_quantile)
+        {
+            gray_level = i;
+            break;
+        }
+    }
+    return gray_level;
+}
+
+void normalize_brightness(const cv::Mat& frame, cv::Mat& out)
+{
+    const float pct = 90;
+
+    const int brightness = find_input_intensity_quantile(frame, pct);
+
+    const double alpha = brightness<127 ? (pct/100.f*0.5f/std::max(5,brightness)) : 1./255;
+    const double beta = -0.5;
+
+    frame.convertTo(out, CV_32F, alpha, beta);
+}
+
+
+std::string PoseEstimator::get_network_input_name(size_t i) const
+{
+#if ORT_API_VERSION >= 12
+    return std::string(&*session_.GetInputNameAllocated(i, allocator_));
+#else
+    return std::string(session_.GetInputName(i, allocator_));
+#endif
+}
+
+std::string PoseEstimator::get_network_output_name(size_t i) const
+{
+#if ORT_API_VERSION >= 12
+    return std::string(&*session_.GetOutputNameAllocated(i, allocator_));
+#else
+    return std::string(session_.GetOutputName(i, allocator_));
+#endif
+}
+
 Localizer::Localizer(Ort::MemoryInfo &allocator_info, Ort::Session &&session) :
     session_{std::move(session)},
     scaled_frame_(INPUT_IMG_HEIGHT, INPUT_IMG_WIDTH, CV_8U),
@@ -21,10 +114,8 @@ std::pair<float, cv::Rect2f> Localizer::run(
     const cv::Mat &frame)
 {
     auto p = input_mat_.ptr(0);
-
     cv::resize(frame, scaled_frame_, { INPUT_IMG_WIDTH, INPUT_IMG_HEIGHT }, 0, 0, cv::INTER_AREA);
-    scaled_frame_.convertTo(input_mat_, CV_32F, 1./255., -0.5);
-
+    scaled_frame_.convertTo(input_mat_, CV_32F, 1.0/255.0, -0.5);
     assert (input_mat_.ptr(0) == p);
     assert (!input_mat_.empty() && input_mat_.isContinuous());
     assert (input_mat_.cols == INPUT_IMG_WIDTH && input_mat_.rows == INPUT_IMG_HEIGHT);
@@ -32,11 +123,7 @@ std::pair<float, cv::Rect2f> Localizer::run(
     const char* input_names[] = {"x"};
     const char* output_names[] = {"logit_box"};
 
-    Timer t; t.start();
-
     session_.Run(Ort::RunOptions{nullptr}, input_names, &input_val_, 1, output_names, &output_val_, 1);
-
-    last_inference_time_ = t.elapsed_ms();
 
     const cv::Rect2f roi = unnormalize(cv::Rect2f{
         results_[1],
@@ -49,11 +136,7 @@ std::pair<float, cv::Rect2f> Localizer::run(
     return { score, roi };
 }
 
-
-
-
-
-
+cv::Quatf image_to_world(cv::Quatf q);
 
 // Returns width and height of the input tensor, or throws.
 // Expects the model to take one tensor as input that must
@@ -70,6 +153,7 @@ cv::Size get_input_image_shape(const Ort::Session &session)
 }
 
 PoseEstimator::PoseEstimator(Ort::MemoryInfo &allocator_info, Ort::Session &&session) 
+    : model_version_{session.GetModelMetadata().GetVersion()}
     , session_{std::move(session)}
     , allocator_{session_, allocator_info}
 {
@@ -86,6 +170,8 @@ PoseEstimator::PoseEstimator(Ort::MemoryInfo &allocator_info, Ort::Session &&ses
     // number we get. Getting an uninitialized value matching a valid version is unlikely.
     // But the real problem is that this line must be updated whenever we want to bump the
     // version number!!
+    if (model_version_ <= 0 || model_version_ > 4)
+        model_version_ = 1;
 
     const cv::Size input_image_shape = get_input_image_shape(session_);
 
@@ -117,8 +203,8 @@ PoseEstimator::PoseEstimator(Ort::MemoryInfo &allocator_info, Ort::Session &&ses
         { "pos_size_scales_tril", TensorSpec{ {1, 3, 3}, output_coord_scales_tril_.val, 9}}
     };
 
-    qDebug() << "Pose model inputs (" << session_.GetInputCount() << ")";
-    qDebug() << "Pose model outputs (" << session_.GetOutputCount() << "):";
+    std::cout << "Pose model inputs (" << session_.GetInputCount() << ")";
+    std::cout << "Pose model outputs (" << session_.GetOutputCount() << "):";
     output_names_.resize(session_.GetOutputCount());
     output_c_names_.resize(session_.GetOutputCount());
     for (size_t i=0; i<session_.GetOutputCount(); ++i)
@@ -128,7 +214,7 @@ PoseEstimator::PoseEstimator(Ort::MemoryInfo &allocator_info, Ort::Session &&ses
         const auto& onnx_tensor_spec = output_info.GetTensorTypeAndShapeInfo();
         auto my_tensor_spec_it = understood_outputs.find(name);
 
-        qDebug() << "\t" << name.c_str() << " (" << onnx_tensor_spec.GetShape() << ") dtype: " <<  onnx_tensor_spec.GetElementType() << " " <<
+        std::cout << "\t" << name.c_str() << " (" << onnx_tensor_spec.GetShape() << ") dtype: " <<  onnx_tensor_spec.GetElementType() << " " <<
             (my_tensor_spec_it != understood_outputs.end() ? "ok" : "unknown");
 
         if (my_tensor_spec_it != understood_outputs.end())
@@ -195,7 +281,6 @@ std::optional<PoseEstimator::Face> PoseEstimator::run(
     assert (input_mat_.ptr(0) == p);
     assert (!input_mat_.empty() && input_mat_.isContinuous());
 
-    Timer t; t.start();
 
     try
     {
@@ -210,11 +295,9 @@ std::optional<PoseEstimator::Face> PoseEstimator::run(
     }
     catch (const Ort::Exception &e)
     {
-        qDebug() << "Failed to run the model: " << e.what();
+        std::cout << "Failed to run the model: " << e.what();
         return {};
     }
-
-    last_inference_time_ = t.elapsed_ms();
 
     // Perform coordinate transformation.
     // From patch-local normalized in [-1,1] to
@@ -261,7 +344,7 @@ std::optional<PoseEstimator::Face> PoseEstimator::run(
     if (model_version_ < 2)
     {
         // Due to a change in coordinate conventions
-        rotation = world_to_image(rotation);
+        rotation = image_to_world(rotation);
     }
 
     const cv::Rect2f outbox = {

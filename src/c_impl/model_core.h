@@ -6,6 +6,7 @@
 #include <onnxruntime_cxx_api.h>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp> 
+#include <opencv2/dnn.hpp>
 
 
 float sigmoid(float x);
@@ -90,12 +91,32 @@ class PoseEstimator
 class Reframer
 {
     public:
+        struct DetectedPeople {
+            cv::Rect bbox;
+            float confidence;
+        };
         Reframer(Ort::MemoryInfo &allocator_info,
-                 Ort::Session &&session);
-        std::vector<cv::Rect> run(const cv::Mat &frame);
+                   Ort::Session &&session, float confidence, float iou);
+        std::vector<DetectedPeople> run(const cv::Mat &frame);
     private:
+        void extract_detections(std::vector<Reframer::DetectedPeople>& oResult);
         Ort::Session session_{nullptr}; 
         cv::Mat scaled_frame_{}, input_mat_{}; 
+        cv::Mat output_mat_{};
+        std::vector<int64_t> inputNodeDims{};
+        std::vector<int64_t> mOutputDims{};
+        inline static constexpr int INPUT_IMG_WIDTH = 640;
+        inline static constexpr int INPUT_IMG_HEIGHT = 640;
+        std::string input_node_name_;
+        std::string output_node_name_;
+        const char* inputNodeNames[1];
+        const char* outputNodeNames[1];
+        Ort::Value input_val_{nullptr}, output_val_{nullptr};
+        std::vector<float> confidences;
+        std::vector<cv::Rect> boxes;
+        std::vector<int> nmsResult;
+        float iouThreshold;
+        float rectConfidenceThreshold;
 };
 
 

@@ -25,27 +25,29 @@ class OPNetTracker {
         OPNetTracker();
         ~OPNetTracker() = default;
         rotation_output run(cv::Mat frame);
-        std::vector<cv::Rect> detect_people_in_frame(const cv::Mat &frame);
+        std::vector<cv::Rect> run_yolo(cv::Mat frame);
     private:
         bool initialize();
         void prepare_input_image(cv::Mat &img);
+        cv::Mat yolo_scale(cv::Mat& img);
+        std::vector<cv::Rect> yolo_unscale(std::vector<Reframer::DetectedPeople> &detections);
         rotation_output detect();
         cv::Mat grayscale;
         Ort::Env env{nullptr};  // Keep environment alive
         Ort::MemoryInfo allocator_info{nullptr};
         std::optional<Localizer> localizer_;
         std::optional<PoseEstimator> poseestimator_;
+        std::optional<Reframer> reframer_;
         std::optional<cv::Rect2f> last_roi;
         std::array<cv::Mat,2> downsized_original_images_ = {}; // Image pyramid
-        bool initialized_ = false;  // Track initialization state
-        cv::dnn::Net net;
-        std::vector<cv::Mat> pre_process(const cv::Mat& input_image);
-        std::vector<Detection> post_process(const cv::Mat& input_image, std::vector<cv::Mat>& outputs);
 
+        float resizeScales;
+        int padX;
+        int padY;
+        
 
-        static constexpr float NMS_THRESHOLD = 0.45f;
-        static constexpr float CONFIDENCE_THRESHOLD = 0.75f;
-        static constexpr float INPUT_WIDTH = 640.0f;
-        static constexpr float INPUT_HEIGHT = 640.0f;
-        static constexpr float SCORE_THRESHOLD = 0.5f;
+        static constexpr float NMS_THRESHOLD = 0.5f;
+        static constexpr float CONFIDENCE_THRESHOLD = 0.6f;
+        inline static constexpr int INPUT_IMG_WIDTH = 640;
+        inline static constexpr int INPUT_IMG_HEIGHT = 640;
 };

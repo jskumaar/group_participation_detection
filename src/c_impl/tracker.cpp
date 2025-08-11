@@ -162,6 +162,7 @@ std::vector<cv::Rect> OPNetTracker::yolo_unscale(std::vector<Reframer::DetectedP
 }
 
 std::vector<cv::Rect> OPNetTracker::run_yolo(cv::Mat frame){
+    frame = frame.clone();
     frame = yolo_scale(frame);
     auto data = reframer_->run(frame);
     return yolo_unscale(data);

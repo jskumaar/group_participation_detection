@@ -21,7 +21,8 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 set(SOURCES
   model_core.cpp
   tracker.cpp
-  webcam_mode.cpp
+  360_image_process.cpp
+  main.cpp
 )
 
 

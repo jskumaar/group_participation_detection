@@ -360,8 +360,9 @@ std::optional<PoseEstimator::Face> PoseEstimator::run(
 }
 
 void Reframer::extract_detections(std::vector<Reframer::DetectedPeople>& oResult){
-    cv::transpose(output_mat_, output_mat_);
-    float* data = (float*)output_mat_.data;
+    cv::Mat transposed;
+    cv::transpose(output_mat_, transposed);
+    float* data = (float*)transposed.data;
     for (int i = 0; i < mOutputDims[2]; ++i)
     {
         float* classesScores = data + 4;

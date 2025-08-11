@@ -39,9 +39,8 @@ public:
         }
         
         // Set camera properties for better quality
-        cap.set(cv::CAP_PROP_FRAME_WIDTH, 1920);
-        cap.set(cv::CAP_PROP_FRAME_HEIGHT, 960);
-        cap.set(cv::CAP_PROP_FPS, 30);
+        cap.set(cv::CAP_PROP_FRAME_WIDTH, 2880);
+        cap.set(cv::CAP_PROP_FRAME_HEIGHT, 1440);
     }
     
     ~PanoViewer() {
@@ -239,11 +238,10 @@ public:
         }
         
         // cv::setMouseCallback("360° Viewer", onMouse, this);
-        cv::namedWindow("360° Viewer", cv::WINDOW_NORMAL);  // Changed from WINDOW_AUTOSIZE
-        cv::resizeWindow("360° Viewer", 640, 480);
+        // cv::namedWindow("360° Viewer", cv::WINDOW_NORMAL);  // Changed from WINDOW_AUTOSIZE
+        // cv::resizeWindow("360° Viewer", 640, 480);
         while (true) {
             cap >> pano_frame;
-            
             if (pano_frame.empty()) {
                 std::cerr << "Failed to capture frame!" << std::endl;
                 break;
@@ -253,30 +251,29 @@ public:
                 std::cout << "Warning: Input is not 2:1 aspect ratio. Current: " 
                          << pano_frame.cols << "x" << pano_frame.rows << std::endl;
             }
-            auto people = tracker.run_yolo(pano_frame);
+            auto people = tracker.run_yolo(pano_frame.clone());
             // Generate perspective view
             int person_id = 0;  // Counter for unique window names
             for(const cv::Rect& person : people){
-                printf("Person %d: ", person_id);
-                printf("coord: (%d, %d, %d, %d)\n", person.x, person.y, person.width, person.height);
-                cv::rectangle(pano_frame, person, cv::Scalar(0, 255, 0), 2);
-                // yaw = ((person.x + person.width / 2) * 0.125) - 180.0;
-                // cv::Mat perspective_view = generatePerspectiveView(pano_frame);
-                // rotation_output pose = tracker.run(perspective_view);
-                // printf("Yaw: %.2f, Pitch: %.2f, Roll: %.2f\n", pose.yaw, pose.pitch, pose.roll);
-                // std::string status = "Yaw: " + std::to_string((int)yaw) + 
-                //     "° Pitch: " + std::to_string((int)pitch) + 
-                //     "° FOV: " + std::to_string((int)fov) + "°";
-                // cv::putText(perspective_view, status, cv::Point(10, 30), 
-                //         cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 255), 2);
-                // // Create unique window name for each person
-                // std::string window_name = "Person " + std::to_string(person_id) + " - 360° Viewer";
-                // cv::imshow(window_name, perspective_view);
+                printf("Person %d: x=%d, y=%d, width=%d, height=%d\n", 
+                        person_id, person.x, person.y, person.width, person.height);
+                yaw = ((person.x + person.width / 2) * 0.125) - 180.0;
+                cv::Mat perspective_view = generatePerspectiveView(pano_frame);
+                rotation_output pose = tracker.run(perspective_view);
+                std::string status = "Yaw: " + std::to_string((int)yaw) + 
+                    "° Pitch: " + std::to_string((int)pitch) + 
+                    "° FOV: " + std::to_string((int)fov) + "°";
+                cv::rectangle(pano_frame, person, cv::Scalar(0, 255, 0), 2);  // Green rectangle, 2px thick
+                cv::putText(perspective_view, status, cv::Point(10, 30), 
+                        cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 255), 2);
+                // Create unique window name for each person
+                std::string window_name = "Person " + std::to_string(person_id) + " - 360 Viewer";
+                cv::imshow(window_name, perspective_view);
                 person_id++;
             }
-            cv::imshow("360° Viewer", pano_frame);
             // Add status overlay
             // Handle keyboard input
+            // imshow("360° Viewer", pano_frame);
             char key = cv::waitKey(1) & 0xFF;
             if (key == 27) break; // ESC to exit
             

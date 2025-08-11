@@ -1,5 +1,8 @@
 #include "360_image_process.h"
 
+
+#define M_PI 3.14159265358979323846
+
 PanoViewer::PanoViewer() {
     // Try to open camera input 1 (change to 0 if needed)
     yaw = 0.0f;
@@ -103,6 +106,113 @@ cv::Mat PanoViewer::generatePerspectiveView(const cv::Mat& pano) {
     }
     
     return output;
+}
+
+static inline cv::Vec3f unit(const cv::Vec3f& v) {
+    float n = cv::norm(v);
+    return (n > 0.f) ? (v / n) : cv::Vec3f(0,0,0);
+}
+
+// Local camera-style convention: z=forward, x=right, y=up
+static inline cv::Vec3f dir_from_yaw_pitch(float yaw, float pitch) {
+    float cp = std::cos(pitch), sp = std::sin(pitch);
+    float cy = std::cos(yaw),   sy = std::sin(yaw);
+    return unit(cv::Vec3f(sy * cp,  // x (right)
+                          sp,       // y (up)
+                          cy * cp   // z (forward)
+    ));
+}
+
+// 2:1 equirectangular mapping -> direction FROM camera
+// u ∈ [0, W), v ∈ [0, H)
+// yaw (λ) ∈ (-π, π], pitch (φ) ∈ [-π/2, π/2]
+static inline cv::Vec3f pano_pixel_to_direction(int u, int v, int W, int H) {
+    float yaw   = ( (float)u / (float)W ) * 2.0f * (float)M_PI - (float)M_PI;        // -π..π
+    float pitch = (0.5f - (float)v / (float)H) * (float)M_PI;                        // -π/2..π/2
+    return dir_from_yaw_pitch(yaw, pitch); // matches our (z-forward, x-right, y-up) convention
+}
+
+/**
+ * Convert local yaw/pitch (relative to person-facing-camera) to a global/world gaze direction.
+ * - yaw, pitch in radians
+ * - (u,v) is the person's pixel in a 2:1 equirect panorama of size W×H
+ * - world_up is typically (0,1,0)
+ */
+cv::Vec3f global_gaze_from_panorama(float yaw, float pitch,
+                                    cv::Vec3f cam_to_person,
+                                    cv::Vec3f world_up = cv::Vec3f(0.f,1.f,0.f)) {
+
+    // Zero-gaze (yaw=0,pitch=0) means looking at the camera
+    cv::Vec3f forward = unit(-cam_to_person);  // person -> camera
+
+    // Build a stable local basis {right, up, forward}
+    if (std::abs(forward.dot(world_up)) > 0.999f) {
+        world_up = cv::Vec3f(0.f, 0.f, 1.f);
+        if (std::abs(forward.dot(world_up)) > 0.999f)
+            world_up = cv::Vec3f(1.f, 0.f, 0.f);
+    }
+    cv::Vec3f right = unit(world_up.cross(forward));
+    cv::Vec3f up    = unit(forward.cross(right));
+
+    // Local gaze direction from yaw/pitch (unit)
+    cv::Vec3f local = dir_from_yaw_pitch(yaw, pitch);
+
+    // Rotate local -> world
+    cv::Vec3f global = right * local[0] + up * local[1] + forward * local[2];
+    return unit(global);
+}
+
+cv::Point PanoViewer::rayToPanoPixel(const cv::Vec3f& p, const cv::Vec3f& d_unit,
+                       float R, int W, int H)
+{
+    cv::Point2f out = {-1, -1};
+    // Quadratic coefficients for |p + t d|^2 = R^2  with |d|=1
+    float b = p.dot(d_unit);                  // half of the b term in quadratic
+    float c = p.dot(p) - R*R;
+    float disc = b*b - c;                     // discriminant
+
+    if (disc < 0.f) return out;               // no intersection
+
+    float s = std::sqrt(std::max(0.f, disc));
+    float t1 = -b - s;                        // near intersection
+    float t2 = -b + s;                        // far intersection
+
+    // choose the farthest intersection that's forward along the ray
+    float t_hit = -std::numeric_limits<float>::infinity();
+    if (t1 >= 0.f) t_hit = t1;
+    if (t2 >= 0.f && t2 > t_hit) t_hit = t2;
+    if (!std::isfinite(t_hit) || t_hit < 0.f) return out; // no forward hit
+
+    // Intersection point
+    cv::Vec3f P = p + t_hit * d_unit;
+    // Project exactly onto sphere to avoid FP error
+    P *= (R / cv::norm(P));
+
+    // Convert to pano pixel coordinates (equirectangular 2:1)
+    float yaw   = std::atan2(P[0], P[2]);      // -π to π
+    float pitch = std::asin(P[1] / R);         // -π/2 to π/2
+
+    float u = (yaw + static_cast<float>(M_PI)) / (2.f * static_cast<float>(M_PI)) * W;
+    float v = (0.5f - pitch / static_cast<float>(M_PI)) * H;
+
+    // Wrap horizontally
+    if (u < 0.f) u += W * std::ceil(-u / W);
+    if (u >= W)  u -= W * std::floor(u / W);
+
+
+    return cv::Point(u, v);
+}
+
+PanoViewer::gaze PanoViewer::addGaze(int personID, float yaw, float pitch, cv::Rect bounding_box) {
+    gaze new_gaze;
+    new_gaze.personID = personID;
+    int centerX = bounding_box.x + bounding_box.width / 2;
+    int centerY = bounding_box.y + bounding_box.height / 2;
+    cv::Vec3f start_direction = pano_pixel_to_direction(centerX, centerY, GLOBAL_FRAME_WIDTH, GLOBAL_FRAME_HEIGHT);
+    new_gaze.direction = global_gaze_from_panorama(yaw * DEG_TO_RAD, pitch * DEG_TO_RAD, start_direction);
+    start_direction *= radius;
+    new_gaze.start = cv::Point3f(start_direction[0], start_direction[1], start_direction[2]);
+    return new_gaze;
 }
 
 void PanoViewer::setYaw(float new_yaw) {

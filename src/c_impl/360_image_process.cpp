@@ -147,6 +147,7 @@ cv::Vec3f global_gaze_from_panorama(float yaw, float pitch,
 
     // Build a stable local basis {right, up, forward}
     if (std::abs(forward.dot(world_up)) > 0.999f) {
+        printf("weird stuff going on\n");
         world_up = cv::Vec3f(0.f, 0.f, 1.f);
         if (std::abs(forward.dot(world_up)) > 0.999f)
             world_up = cv::Vec3f(1.f, 0.f, 0.f);
@@ -198,7 +199,6 @@ cv::Point PanoViewer::rayToPanoPixel(const cv::Vec3f& p, const cv::Vec3f& d_unit
     // Wrap horizontally
     if (u < 0.f) u += W * std::ceil(-u / W);
     if (u >= W)  u -= W * std::floor(u / W);
-
 
     return cv::Point(u, v);
 }

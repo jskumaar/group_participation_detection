@@ -47,7 +47,7 @@ class OPNetTracker {
         
 
         static constexpr float NMS_THRESHOLD = 0.5f;
-        static constexpr float CONFIDENCE_THRESHOLD = 0.6f;
+        static constexpr float CONFIDENCE_THRESHOLD = 0.5f;
         inline static constexpr int INPUT_IMG_WIDTH = 640;
         inline static constexpr int INPUT_IMG_HEIGHT = 640;
 };

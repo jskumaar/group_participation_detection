@@ -88,7 +88,7 @@ void OPNetTracker::prepare_input_image(cv::Mat &img){
 
     img = img(make_crop_rect_multiple_of(img.size(), 4));
 
-        if (img.cols > 640)
+    if (img.cols > 640)
     {
         cv::pyrDown(img, downsized_original_images_[0]);
         img = downsized_original_images_[0];

@@ -1,3 +1,6 @@
+// if using mac, convert wstrings to strings. opposite if windows
+
+
 #include "tracker.h"
 
 

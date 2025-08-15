@@ -1,6 +1,6 @@
 #include "tracker.h"
 
-#define M_PI 3.14159265358979323846
+
 
 
 namespace fs = std::filesystem;
@@ -21,11 +21,11 @@ bool OPNetTracker::initialize() {
         session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         allocator_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
         fs::path exe_dir = fs::current_path().parent_path().parent_path();
-        std::wstring model_path = (exe_dir / L"models" / L"head-localizer.onnx").wstring();
+        std::string model_path = (exe_dir / L"models" / L"head-localizer.onnx").string();
         localizer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
-        model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").wstring();
+        model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").string();
         poseestimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
-        model_path = (exe_dir / L"models" / L"yolo11n.onnx").wstring();
+        model_path = (exe_dir / L"models" / L"yolo11n.onnx").string();
         reframer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options), CONFIDENCE_THRESHOLD, NMS_THRESHOLD);
     }
     catch (const Ort::Exception &e)

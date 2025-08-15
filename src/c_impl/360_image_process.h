@@ -3,6 +3,7 @@
 #include <opencv2/opencv.hpp>
 #include <iostream>
 #include <cmath>
+#include<deque>
 
 class PanoViewer{
     public:
@@ -11,6 +12,19 @@ class PanoViewer{
             cv::Vec3f direction;
             int personID;
         };
+
+
+        struct gaze_window{
+            std::deque<int> sights; // queue of n frames, each with data holding a person_id at who this person is looking at 
+            std::vector<int> counts; // an array of num_people size mapping index to num frames the person looks at another person with index id
+            int personID;
+            int max_window_length; // after hits this, start removing frames from front and add frame to back 
+            
+        };
+        // window_length in frames, 
+
+
+
         PanoViewer();
         ~PanoViewer();
         cv::Mat generatePerspectiveView(const cv::Mat& pano);
@@ -22,6 +36,10 @@ class PanoViewer{
         gaze addGaze(int personID, float yaw, float pitch, cv::Rect bounding_box);
         cv::Point rayToPanoPixel(const cv::Vec3f& p, const cv::Vec3f& d_unit,
                        float R, int W, int H);
+        static int bbox_intersections(const cv::Point& gaze_pt, const cv::Point& start_pt, const std::vector<cv::Rect>& bounding_boxes);
+        static gaze_window& add_frame_to_window(PanoViewer::gaze_window& gaze_win, int person_id, int intersect);
+        static void print_gaze_window(PanoViewer::gaze_window& gaze_win, cv::Mat frame, cv::Rect bbox);
+        
     private:
 
         std::vector<gaze> gazes;

@@ -1,7 +1,7 @@
 #include "360_image_process.h"
 
+#define num_people 3;
 
-#define M_PI 3.14159265358979323846
 
 PanoViewer::PanoViewer() {
     // Try to open camera input 1 (change to 0 if needed)
@@ -228,3 +228,89 @@ void PanoViewer::setFOV(float new_fov) {
 }
 
 
+// returns -1 if looking at nobody
+ int PanoViewer:: bbox_intersections(const cv::Point& gaze_pt, const cv::Point& start_pt, const std::vector<cv::Rect>& bounding_boxes)
+{
+    double scale_factor = 0.2; // in pixels
+    int person_id = 0;
+    for(const cv::Rect& bbox : bounding_boxes){
+        if (cv::Point(bbox.x, bbox.y) == start_pt){
+            person_id++;
+            continue;
+        }
+
+        int dw = static_cast<int>(bbox.width  * scale_factor);
+        int dh = static_cast<int>(bbox.height * scale_factor);
+
+    // Create new rect centered on the same point
+    cv::Rect scaled(bbox.x - dw / 2, bbox.y - dh / 2, bbox.width  + dw, bbox.height + dh);
+        if (scaled.contains(gaze_pt))
+        {
+            return person_id;
+        }
+        else{
+            person_id++;
+        }
+    }
+    return -1;
+}
+
+
+PanoViewer::gaze_window& PanoViewer::add_frame_to_window(PanoViewer::gaze_window& gaze_win, int person_id, int intersect)
+{
+    if (gaze_win.sights.size() == gaze_win.max_window_length){
+        int first_value = gaze_win.sights[0];
+        gaze_win.sights.pop_front();
+        if (first_value ==-1){
+            gaze_win.counts[person_id]--;
+        }
+        else{
+            gaze_win.counts[first_value] --;
+        }
+    } // only decrement counts and remove first val if size of sights has reached max size 
+
+    gaze_win.sights.push_back(intersect);
+    if (intersect==-1){ // not looking at andybody, add to count index of person_id to keep track 
+        gaze_win.counts[person_id] ++;
+    }
+
+    else{
+        gaze_win.counts[intersect]++;
+    }
+
+    return gaze_win;
+}
+
+void PanoViewer::print_gaze_window(PanoViewer::gaze_window& gaze_win, cv::Mat frame, cv::Rect bbox)
+{
+    if (gaze_win.sights.size() < gaze_win.max_window_length)
+    {
+        cv::putText(frame, "not enought data",  cv::Point(bbox.x-100, bbox.y-300), cv::FONT_HERSHEY_SIMPLEX,  2.0, cv::Scalar (255, 255, 255), 2);
+        return;
+    }
+
+    int y_offset = 400;
+
+    cv::putText(frame, "Over last  " + std::to_string(gaze_win.max_window_length) + " frames: ",  
+                cv::Point(bbox.x, bbox.y-y_offset), cv::FONT_HERSHEY_SIMPLEX,  0.8, cv::Scalar (0, 0, 0), 2);
+
+
+
+    y_offset-=100;
+    for(int i = 0; i<gaze_win.counts.size(); i++){
+        if (i== gaze_win.personID)
+        {
+            double pct_elsewhere = 100.0 * (double)(gaze_win.counts[gaze_win.personID]) / (double)(gaze_win.max_window_length);
+            cv::putText(frame, "% looking elswhere: " + std::to_string(pct_elsewhere),  
+                        cv::Point(bbox.x, bbox.y-y_offset), cv::FONT_HERSHEY_SIMPLEX,  0.8, cv::Scalar (0, 0, 0), 2);
+        } 
+        else
+        {
+            double pct = 100.0 * (double)(gaze_win.counts[i]) / (double)(gaze_win.max_window_length);
+            cv::putText(frame, "%looking at person " + std::to_string(i) + " : " + std::to_string(pct), 
+                        cv::Point(bbox.x, bbox.y-y_offset), cv::FONT_HERSHEY_SIMPLEX,  0.8, cv::Scalar (0, 0, 0), 2);
+        }
+        y_offset-=100;
+    }
+
+}

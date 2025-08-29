@@ -1,4 +1,4 @@
-
+#pragma once
 #include <vector>
 #include <set>
 #include <opencv2/opencv.hpp>

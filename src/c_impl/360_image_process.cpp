@@ -1,4 +1,6 @@
 #include "360_image_process.h"
+#include "SORT.h"
+
 
 #define num_people 3;
 
@@ -228,32 +230,62 @@ void PanoViewer::setFOV(float new_fov) {
 }
 
 
-// returns -1 if looking at nobody
- int PanoViewer:: bbox_intersections(const cv::Point& gaze_pt, const cv::Point& start_pt, const std::vector<cv::Rect>& bounding_boxes)
+inline cv::Point2d pano_to_spherical(const cv::Point& pixel) {
+    // Normalize [0, W] → [0, 1], then scale to [-π, π]
+    double lon = (static_cast<double>(pixel.x) /PanoViewer::getGlobalWidth()) * 2.0 * M_PI - 1.0 * M_PI;
+
+    // Normalize [0, H] → [0, 1], then scale to [-π/2, π/2]
+    double lat = (0.5 -static_cast<double>(pixel.y) / PanoViewer::getGlobalHeight())* M_PI;
+
+    return {lon, lat};  // (longitude, latitude)
+}
+
+
+
+
+
+
+// Returns -1 if gaze not intersecting any bounding box
+int PanoViewer::bbox_intersections(const cv::Point& gaze_pt, const cv::Point& start_pt,
+                                   const std::vector<Sort::Track>& bounding_boxes)
 {
-    double scale_factor = 0.2; // in pixels
-    int person_id = 0;
-    for(const cv::Rect& bbox : bounding_boxes){
-        if (cv::Point(bbox.x, bbox.y) == start_pt){
-            person_id++;
+    // Convert gaze point to spherical coordinates
+    cv::Point2d gaze_sph = pano_to_spherical(gaze_pt);
+
+    
+    double scale = 1.2; // scale bounding box by 20%
+    for (const Sort::Track& t : bounding_boxes) {
+        // Skip self. -1 since track ids start at 1
+        if (cv::Point(t.box.x, t.box.y) == start_pt){
             continue;
         }
+        cv::Rect bbox = t.box;
+        // Compute scaled bounding box
+        cv::Point center(bbox.x + bbox.width/2, bbox.y + bbox.height/2);
+        int scaled_w = static_cast<int>(bbox.width * scale);
+        int scaled_h = static_cast<int>(bbox.height * scale);
+        cv::Point top_left(center.x - scaled_w/2, center.y - scaled_h/2);
+        cv::Point bot_right(center.x + scaled_w/2, center.y + scaled_h/2);
 
-        int dw = static_cast<int>(bbox.width  * scale_factor);
-        int dh = static_cast<int>(bbox.height * scale_factor);
+        // Convert corners to spherical coordinates
+        cv::Point2d top_left_sph  = pano_to_spherical(top_left);
+        cv::Point2d bot_right_sph = pano_to_spherical(bot_right);
 
-    // Create new rect centered on the same point
-    cv::Rect scaled(bbox.x - dw / 2, bbox.y - dh / 2, bbox.width  + dw, bbox.height + dh);
-        if (scaled.contains(gaze_pt))
-        {
-            return person_id;
-        }
-        else{
-            person_id++;
+        double min_lon = std::min(top_left_sph.x, bot_right_sph.x);
+        double max_lon = std::max(top_left_sph.x, bot_right_sph.x);
+        double min_lat = std::min(top_left_sph.y, bot_right_sph.y);
+        double max_lat = std::max(top_left_sph.y, bot_right_sph.y);
+
+        // Check if gaze lies inside spherical box
+        if (gaze_sph.x >= min_lon && gaze_sph.x <= max_lon && 
+            gaze_sph.y >= min_lat && gaze_sph.y <= max_lat) {
+            return t.id-1;
         }
     }
+
     return -1;
 }
+
 
 
 PanoViewer::gaze_window& PanoViewer::add_frame_to_window(PanoViewer::gaze_window& gaze_win, int person_id, int intersect)

@@ -173,8 +173,8 @@ int main() {
             cv::Rect scaled( person.x - dw / 2, person.y - dh / 2, person.width  + dw, person.height + dh);
             cv::rectangle(pano_frame, scaled, cv::Scalar(255,0,0), 2);
 
-        
-            int intersect = PanoViewer:: bbox_intersections(cv::Point(pano_pixel.x, pano_pixel.y), cv::Point(person.x, person.y), people);
+            
+            int intersect = PanoViewer:: bbox_intersections(cv::Point(pano_pixel.x, pano_pixel.y), cv::Point(person.x, person.y), tracks);
             cv::circle(pano_frame, pano_pixel, 40, color, 2);
             std::string text = "Person: " + std::to_string(person_id) + " looking at person: " + std::to_string(intersect);
             cv::putText(pano_frame, text ,  cv::Point(person.x, person.y), cv::FONT_HERSHEY_SIMPLEX,  1.0,  color, 2);

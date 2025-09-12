@@ -3,7 +3,7 @@
 
 
 #define num_people 3;
-
+#define M_PI 3.14159265358979323846
 
 PanoViewer::PanoViewer() {
     // Try to open camera input 1 (change to 0 if needed)

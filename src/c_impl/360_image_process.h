@@ -20,7 +20,6 @@ class PanoViewer{
             std::vector<int> counts; // an array of num_people size mapping index to num frames the person looks at another person with index id
             int personID;
             int max_window_length; // after hits this, start removing frames from front and add frame to back 
-            
         };
         // window_length in frames, 
 

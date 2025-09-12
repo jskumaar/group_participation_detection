@@ -4,7 +4,7 @@
 #include "tracker.h"
 
 
-
+#define M_PI 3.14159265358979323846
 
 namespace fs = std::filesystem;
 
@@ -24,11 +24,20 @@ bool OPNetTracker::initialize() {
         session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         allocator_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
         fs::path exe_dir = fs::current_path().parent_path().parent_path();
-        std::string model_path = (exe_dir / L"models" / L"head-localizer.onnx").string();
+        //MAC
+        // std::string model_path = (exe_dir / L"models" / L"head-localizer.onnx").string();
+        //WINDOWS
+        std::wstring model_path = (exe_dir / L"models" / L"head-localizer.onnx").wstring();
         localizer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
-        model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").string();
+        //MAC
+        // model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").string();
+        //WINDOWS
+        model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").wstring();
         poseestimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
-        model_path = (exe_dir / L"models" / L"yolo11n.onnx").string();
+        //MAC
+        // model_path = (exe_dir / L"models" / L"yolo11n.onnx").string();
+        //WINDOWS
+        model_path = (exe_dir / L"models" / L"yolo11n.onnx").wstring();
         reframer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options), CONFIDENCE_THRESHOLD, NMS_THRESHOLD);
     }
     catch (const Ort::Exception &e)

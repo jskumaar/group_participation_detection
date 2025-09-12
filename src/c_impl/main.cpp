@@ -15,6 +15,14 @@ OPNetTracker tracker;
 #define GLOBAL_FRAME_HEIGHT 1440
 #define num_people 3
 
+
+#define localizer_confidence 0.0
+
+/*
+Run yolo
+run SORT
+    */
+
 void visualize(FILE* gp, int R, std::vector<PanoViewer::gaze> gazes){
 
     // Draw loop (could be in a while(true) for realtime)
@@ -51,12 +59,15 @@ void visualize(FILE* gp, int R, std::vector<PanoViewer::gaze> gazes){
     fflush(gp);
 }
 
+//void initialize_sequence(&std::vector<cv::Mat> frames){
+//
+// }
 
 int main() {
 
     // change based on where ur vid is located
-    char* vid_path = "/Users/atind/Downloads/demo_1_stitched.mp4";
-    cv::VideoCapture cap(vid_path);;
+    char* vid_path = "demo_1_stitched.mp4";
+    cv::VideoCapture cap(vid_path);
     if (!cap.isOpened()) {
         std::cerr << "Error: Cannot open camera input 1. Trying input 0..." << std::endl;
     }
@@ -70,9 +81,9 @@ int main() {
 
 
 
-    FILE* gp = popen("gnuplot -persistent", "w");
+    // FILE* gp = popen("gnuplot -persistent", "w");
     // USE ONE BELOW FOR WINDOWS 
-    // FILE* gp = _popen("gnuplot -persistent", "w");
+    FILE* gp = _popen("gnuplot -persistent", "w");
 
     if (!gp) { std::cerr << "Failed to start gnuplot\n"; return 1; }
 
@@ -101,7 +112,7 @@ int main() {
         gaze_windows[i].max_window_length = 20; 
         gaze_windows[i].counts.resize(num_people, 0);
         gaze_windows[i].sights.clear();
-}
+    }
 
 
     Sort object_tracker;
@@ -109,6 +120,8 @@ int main() {
     while (true) {
         cap >> pano_frame;
         cv::resize(pano_frame, pano_frame, cv::Size(2880,1440)); // new width, height
+
+
         if (pano_frame.empty()) {
             std::cerr << "Failed to capture frame!" << std::endl;
             break;
@@ -174,7 +187,7 @@ int main() {
             cv::rectangle(pano_frame, scaled, cv::Scalar(255,0,0), 2);
 
             
-            int intersect = PanoViewer:: bbox_intersections(cv::Point(pano_pixel.x, pano_pixel.y), cv::Point(person.x, person.y), tracks);
+            int intersect = PanoViewer::bbox_intersections(cv::Point(pano_pixel.x, pano_pixel.y), cv::Point(person.x, person.y), tracks);
             cv::circle(pano_frame, pano_pixel, 40, color, 2);
             std::string text = "Person: " + std::to_string(person_id) + " looking at person: " + std::to_string(intersect);
             cv::putText(pano_frame, text ,  cv::Point(person.x, person.y), cv::FONT_HERSHEY_SIMPLEX,  1.0,  color, 2);
@@ -182,8 +195,8 @@ int main() {
 
             cv::rectangle(pano_frame, person, cv::Scalar(0, 255, 0), 2);  // Green rectangle, 2px thick
 
-            PanoViewer::gaze_window person_gaze_win = PanoViewer::add_frame_to_window(gaze_windows[person_id],person_id,intersect);
-            PanoViewer::print_gaze_window(person_gaze_win, pano_frame, scaled);
+            PanoViewer::add_frame_to_window(gaze_windows[person_id], person_id, intersect);
+            PanoViewer::print_gaze_window(gaze_windows[person_id], pano_frame, scaled);
             person_id++;
             perspective_view.release();
         }
@@ -197,9 +210,9 @@ int main() {
 
 
 
-    pclose(gp);
+    // pclose(gp);
     // USE ONE BELOW FOR WINDOWS
-    // _pclose(gp);
+    _pclose(gp);
     cap.release();
     cv::destroyAllWindows();
     return 0;

@@ -4,7 +4,8 @@
 #include "tracker.h"
 
 
-#define M_PI 3.14159265358979323846
+// NEED FOR WINDOWS
+// #define M_PI 3.14159265358979323846
 
 namespace fs = std::filesystem;
 
@@ -25,19 +26,19 @@ bool OPNetTracker::initialize() {
         allocator_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
         fs::path exe_dir = fs::current_path().parent_path().parent_path();
         //MAC
-        // std::string model_path = (exe_dir / L"models" / L"head-localizer.onnx").string();
-        //WINDOWS
-        std::wstring model_path = (exe_dir / L"models" / L"head-localizer.onnx").wstring();
+        std::string model_path = (exe_dir / L"models" / L"head-localizer.onnx").string();
+        //WINDOWS 
+        // std::wstring model_path = (exe_dir / L"models" / L"head-localizer.onnx").wstring();
         localizer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
         //MAC
-        // model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").string();
+        model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").string();
         //WINDOWS
-        model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").wstring();
+        // model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").wstring();
         poseestimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
         //MAC
-        // model_path = (exe_dir / L"models" / L"yolo11n.onnx").string();
+        model_path = (exe_dir / L"models" / L"yolo11n.onnx").string();
         //WINDOWS
-        model_path = (exe_dir / L"models" / L"yolo11n.onnx").wstring();
+        // model_path = (exe_dir / L"models" / L"yolo11n.onnx").wstring();
         reframer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options), CONFIDENCE_THRESHOLD, NMS_THRESHOLD);
     }
     catch (const Ort::Exception &e)

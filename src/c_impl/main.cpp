@@ -6,7 +6,9 @@
 #include <vector>
 #include <cstdio>
 
-#define M_PI 3.14159265358979323846
+
+// NEED FOR WINDOWS
+// #define M_PI 3.14159265358979323846
 
 PanoViewer viewer;
 OPNetTracker tracker;
@@ -16,12 +18,11 @@ OPNetTracker tracker;
 #define num_people 3
 
 
+// RUNNING Yolo and SORT iff first frame or local izer confidence is low
 #define localizer_confidence 0.0
+#define CONFIDENCE_THRESHOLD 0.3
 
-/*
-Run yolo
-run SORT
-    */
+
 
 void visualize(FILE* gp, int R, std::vector<PanoViewer::gaze> gazes){
 
@@ -59,14 +60,24 @@ void visualize(FILE* gp, int R, std::vector<PanoViewer::gaze> gazes){
     fflush(gp);
 }
 
-//void initialize_sequence(&std::vector<cv::Mat> frames){
-//
-// }
+
+
+void yolo_plus_sort(cv::Mat frame, Sort& object_tracker, std::vector<Sort::Track>& tracks){
+    std::vector<cv::Rect> people = tracker.run_yolo(frame);
+    tracks = object_tracker.update(people);
+
+}
 
 int main() {
 
+    Sort object_tracker;
+    std::vector<Sort::Track> tracks;
+    
     // change based on where ur vid is located
-    char* vid_path = "demo_1_stitched.mp4";
+    // Atindrah's video path
+    char* vid_path = "/Users/atind/Downloads/demo_1_stitched.mp4";
+    // NAVEEN'S video path
+    // char* vid_path = "demo_1_stitched.mp4";
     cv::VideoCapture cap(vid_path);
     if (!cap.isOpened()) {
         std::cerr << "Error: Cannot open camera input 1. Trying input 0..." << std::endl;
@@ -81,9 +92,10 @@ int main() {
 
 
 
-    // FILE* gp = popen("gnuplot -persistent", "w");
+    // MAC
+    FILE* gp = popen("gnuplot -persistent", "w");
     // USE ONE BELOW FOR WINDOWS 
-    FILE* gp = _popen("gnuplot -persistent", "w");
+    // FILE* gp = _popen("gnuplot -persistent", "w");
 
     if (!gp) { std::cerr << "Failed to start gnuplot\n"; return 1; }
 
@@ -106,20 +118,23 @@ int main() {
     std::vector<cv::Rect> people;
 
     // array of gaze_windows based on index per person
-    std::vector<PanoViewer::gaze_window> gaze_windows(num_people);
-    for (int i = 0; i < num_people; i++) {
-        gaze_windows[i].personID = i;
-        gaze_windows[i].max_window_length = 20; 
-        gaze_windows[i].counts.resize(num_people, 0);
-        gaze_windows[i].sights.clear();
-    }
 
+    // NOT NEEDED FOR TESTING PURPOSES 
+    // std::vector<PanoViewer::gaze_window> gaze_windows(num_people);
+    // for (int i = 0; i < num_people; i++) {
+    //     gaze_windows[i].personID = i;
+    //     gaze_windows[i].max_window_length = 20; 
+    //     gaze_windows[i].counts.resize(num_people, 0);
+    //     gaze_windows[i].sights.clear();
+    // }
 
-    Sort object_tracker;
 
     while (true) {
         cap >> pano_frame;
         cv::resize(pano_frame, pano_frame, cv::Size(2880,1440)); // new width, height
+        if (frame_count == 0 || localizer_confidence<CONFIDENCE_THRESHOLD) {
+            yolo_plus_sort(pano_frame, object_tracker, tracks);
+        }
 
 
         if (pano_frame.empty()) {
@@ -131,13 +146,13 @@ int main() {
             printf("Error: Incorrect aspect ratio\n");
             exit(1);
         }
-        if(frame_count % 10 == 0){
-            printf("Running YOLO on frame %zu\n", frame_count);
-            people = tracker.run_yolo(pano_frame);
-        }
+        // if(frame_count % 10 == 0){
+        //     printf("Running YOLO on frame %zu\n", frame_count);
+        //     people = tracker.run_yolo(pano_frame);
+        // }
         
         
-        std::vector<Sort::Track> tracks = object_tracker.update(people);
+        // std::vector<Sort::Track> tracks = object_tracker.update(people);
         
         
         // Generate perspective view
@@ -178,13 +193,7 @@ int main() {
             printf("Pano Pixel: x=%d, y=%d\n", pano_pixel.x, pano_pixel.y);
             // calculates if gaze_pt intersects others' bboxes
 
-            // just draws scaled box, for visualization and testing purposes
-            double scale_factor = 0.2;
-            int dw = static_cast<int>(person.width  * scale_factor);
-            int dh = static_cast<int>(person.height * scale_factor);
-         // Create new rect centered on the same point
-            cv::Rect scaled( person.x - dw / 2, person.y - dh / 2, person.width  + dw, person.height + dh);
-            cv::rectangle(pano_frame, scaled, cv::Scalar(255,0,0), 2);
+           
 
             
             int intersect = PanoViewer::bbox_intersections(cv::Point(pano_pixel.x, pano_pixel.y), cv::Point(person.x, person.y), tracks);
@@ -195,8 +204,9 @@ int main() {
 
             cv::rectangle(pano_frame, person, cv::Scalar(0, 255, 0), 2);  // Green rectangle, 2px thick
 
-            PanoViewer::add_frame_to_window(gaze_windows[person_id], person_id, intersect);
-            PanoViewer::print_gaze_window(gaze_windows[person_id], pano_frame, scaled);
+            // NOT NEEDED FOR TESTING PURPOSES 
+            // PanoViewer::add_frame_to_window(gaze_windows[person_id], person_id, intersect);
+            // PanoViewer::print_gaze_window(gaze_windows[person_id], pano_frame, scaled);
             person_id++;
             perspective_view.release();
         }
@@ -209,10 +219,10 @@ int main() {
     }
 
 
-
-    // pclose(gp);
+    // MAC
+    pclose(gp);
     // USE ONE BELOW FOR WINDOWS
-    _pclose(gp);
+    // c
     cap.release();
     cv::destroyAllWindows();
     return 0;

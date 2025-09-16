@@ -11,7 +11,15 @@ typedef struct yaw_pitch_roll {
     float yaw;
     float pitch;
     float roll;
-} rotation_output;
+    float x;
+    float y;
+    float z;
+} Pose;
+
+typedef struct RawPose {
+    cv::Quatf rotation;
+    cv::Vec3f position;
+} RawPose;
 
 struct Detection {
     cv::Rect box;
@@ -19,19 +27,28 @@ struct Detection {
     int class_id;
 };
 
+struct CamIntrinsics
+{
+    float focal_length_w;
+    float focal_length_h;
+    float fov_w;
+    float fov_h;
+};
+
 
 class OPNetTracker {
     public:
         OPNetTracker();
         ~OPNetTracker() = default;
-        rotation_output run(cv::Mat frame);
+        Pose run(cv::Mat frame, int fov);
         std::vector<cv::Rect> run_yolo(cv::Mat frame);
     private:
         bool initialize();
         void prepare_input_image(cv::Mat &img);
+        RawPose transform_to_world_pose(const cv::Quatf &face_rotation, const cv::Point2f& face_xy, const float face_size);
         cv::Mat yolo_scale(cv::Mat& img);
         std::vector<cv::Rect> yolo_unscale(std::vector<Reframer::DetectedPeople> &detections);
-        rotation_output detect();
+        Pose detect();
         cv::Mat grayscale;
         Ort::Env env{nullptr};  // Keep environment alive
         Ort::MemoryInfo allocator_info{nullptr};
@@ -40,12 +57,13 @@ class OPNetTracker {
         std::optional<Reframer> reframer_;
         std::optional<cv::Rect2f> last_roi;
         std::array<cv::Mat,2> downsized_original_images_ = {}; // Image pyramid
-
+        CamIntrinsics intrinsics_;
         float resizeScales;
         int padX;
         int padY;
-        
 
+
+        static constexpr float HEAD_SIZE_MM = 200.f;
         static constexpr float NMS_THRESHOLD = 0.5f;
         static constexpr float CONFIDENCE_THRESHOLD = 0.5f;
         inline static constexpr int INPUT_IMG_WIDTH = 640;

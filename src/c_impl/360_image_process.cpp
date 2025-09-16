@@ -229,6 +229,11 @@ void PanoViewer::setFOV(float new_fov) {
     fov = new_fov;
 }
 
+float PanoViewer::getFOV() {
+    return fov;
+}
+
+
 
 inline cv::Point2d pano_to_spherical(const cv::Point& pixel) {
     // Normalize [0, W] → [0, 1], then scale to [-π, π]

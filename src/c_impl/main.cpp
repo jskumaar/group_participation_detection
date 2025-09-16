@@ -8,7 +8,7 @@
 
 
 // NEED FOR WINDOWS
-// #define M_PI 3.14159265358979323846
+#define M_PI 3.14159265358979323846
 
 PanoViewer viewer;
 OPNetTracker tracker;
@@ -75,9 +75,9 @@ int main() {
     
     // change based on where ur vid is located
     // Atindrah's video path
-    char* vid_path = "/Users/atind/Downloads/demo_1_stitched.mp4";
+    // char* vid_path = "/Users/atind/Downloads/demo_1_stitched.mp4";
     // NAVEEN'S video path
-    // char* vid_path = "demo_1_stitched.mp4";
+    char* vid_path = "demo_1_stitched.mp4";
     cv::VideoCapture cap(vid_path);
     if (!cap.isOpened()) {
         std::cerr << "Error: Cannot open camera input 1. Trying input 0..." << std::endl;
@@ -93,9 +93,9 @@ int main() {
 
 
     // MAC
-    FILE* gp = popen("gnuplot -persistent", "w");
+    // FILE* gp = popen("gnuplot -persistent", "w");
     // USE ONE BELOW FOR WINDOWS 
-    // FILE* gp = _popen("gnuplot -persistent", "w");
+    FILE* gp = _popen("gnuplot -persistent", "w");
 
     if (!gp) { std::cerr << "Failed to start gnuplot\n"; return 1; }
 
@@ -128,11 +128,11 @@ int main() {
     //     gaze_windows[i].sights.clear();
     // }
 
-
+    yolo_plus_sort(pano_frame, object_tracker, tracks);
     while (true) {
         cap >> pano_frame;
         cv::resize(pano_frame, pano_frame, cv::Size(2880,1440)); // new width, height
-        if (frame_count == 0 || localizer_confidence<CONFIDENCE_THRESHOLD) {
+        if (localizer_confidence<CONFIDENCE_THRESHOLD) {
             yolo_plus_sort(pano_frame, object_tracker, tracks);
         }
 
@@ -180,8 +180,8 @@ int main() {
             int yaw = ((person.x + person.width / 2) * 0.125) - 180.0;
             viewer.setYaw(yaw);
             perspective_view = viewer.generatePerspectiveView(pano_frame);
-            rotation_output pose = tracker.run(perspective_view);
-            printf("personID: %d, yaw: %f, pitch: %f\n", person_id, pose.yaw, pose.pitch);
+            Pose pose = tracker.run(perspective_view, viewer.getFOV());
+            printf("personID: %d, yaw: %f, pitch: %f, roll: %f, x: %f, y: %f, z: %f\n", person_id, pose.yaw, pose.pitch, pose.roll, pose.position.x, pose.position.y, pose.position.z);
             PanoViewer::gaze gaze = viewer.addGaze(person_id, pose.yaw, pose.pitch, person);
             gazes.push_back(gaze);
             auto pano_pixel = viewer.rayToPanoPixel(cv::Vec3f(gaze.start.x, gaze.start.y, gaze.start.z),

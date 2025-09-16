@@ -1,39 +1,40 @@
-cmake_minimum_required(VERSION 3.15)
-project(tracker LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.10)
+project(tracker)
 
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ONNX Runtime - use the correct include path
-set(ONNXRUNTIME_DIR "/opt/homebrew/opt/onnxruntime")
+include_directories(
+  ${CMAKE_SOURCE_DIR}/onnx/include
+)
+
+
+link_directories(
+  ${CMAKE_SOURCE_DIR}/onnx/lib
+)
 
 # OpenCV
+set(OpenCV_DIR "C:/opencv/build")
 find_package(OpenCV REQUIRED)
+include_directories(${OpenCV_INCLUDE_DIRS})
 
 # Sources
 set(SOURCES
     model_core.cpp
     tracker.cpp
-    # webcam_mode.cpp
     SORT.cpp
-    main.cpp
     360_image_process.cpp
+    model_test.cpp
+    # main.cpp
     ${CMAKE_SOURCE_DIR}/sort-cpp/sort-c++/KalmanTracker.cpp
     ${CMAKE_SOURCE_DIR}/sort-cpp/sort-c++/Hungarian.cpp
-
 )
 
 # Executable
 add_executable(${PROJECT_NAME} ${SOURCES})
 
 # Include directories - add the onnxruntime subdirectory
-target_include_directories(${PROJECT_NAME} PRIVATE 
-    ${ONNXRUNTIME_DIR}/include/onnxruntime
-    ${OpenCV_INCLUDE_DIRS}
-)
-
 target_link_libraries(${PROJECT_NAME}
-    ${OpenCV_LIBS}
-    ${ONNXRUNTIME_DIR}/lib/libonnxruntime.dylib
-
+  ${OpenCV_LIBS}
+  onnxruntime
 )

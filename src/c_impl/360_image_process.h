@@ -31,6 +31,7 @@ class PanoViewer{
         void setYaw(float new_yaw);
         void setPitch(float new_pitch);
         void setFOV(float new_fov);
+        float getFOV();
 
         //calc functions
         gaze addGaze(int personID, float yaw, float pitch, cv::Rect bounding_box);

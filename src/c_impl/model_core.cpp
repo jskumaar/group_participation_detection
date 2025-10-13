@@ -359,21 +359,86 @@ std::optional<PoseEstimator::Face> PoseEstimator::run(
     });
 }
 
-Reframer::Reframer(Ort::MemoryInfo &allocator_info,
-                   Ort::Session &&session)
-    : session_(std::move(session))
-{
-    // Initialize input/output names and values
-    input_names_ = {"input"};
-    output_names_ = {"output"};
-    input_val_.resize(input_names_.size());
-    output_val_.resize(output_names_.size());
+void Reframer::extract_detections(std::vector<Reframer::DetectedPeople>& oResult){
+    cv::Mat transposed;
+    cv::transpose(output_mat_, transposed);
+    float* data = (float*)transposed.data;
+    for (int i = 0; i < mOutputDims[2]; ++i)
+    {
+        float* classesScores = data + 4;
+        cv::Mat scores(1, mOutputDims[1]-4, CV_32FC1, classesScores);
+        cv::Point class_id;
+        double maxClassScore;
+        cv::minMaxLoc(scores, 0, &maxClassScore, 0, &class_id);
+        if (maxClassScore > rectConfidenceThreshold && class_id.x == 0)
+        {
+            confidences.push_back(maxClassScore);
+            float x = data[0];
+            float y = data[1];
+            float w = data[2];
+            float h = data[3];
+            int left = int(x - 0.5 * w);
+            int top = int(y - 0.5 * h);
+            boxes.push_back(cv::Rect(left, top, w, h));
+        }
+        data += mOutputDims[1];
+    }
+    cv::dnn::NMSBoxes(boxes, confidences, rectConfidenceThreshold, iouThreshold, nmsResult);
+    for (int i = 0; i < nmsResult.size(); ++i)
+    {
+        int idx = nmsResult[i];
+        Reframer::DetectedPeople result;
+        result.confidence = confidences[idx];
+        result.bbox = boxes[idx];
+        oResult.push_back(result);
+    }
 }
 
-std::vector<cv::Rect> Reframer::run(const cv::Mat &frame)
-{
-    // Preprocess the frame and run the model
-    // ...
 
-    return {};
+
+Reframer::Reframer(Ort::MemoryInfo &allocator_info,
+                   Ort::Session &&session, float confidence, float iou)
+    : session_(std::move(session))
+    , scaled_frame_(INPUT_IMG_HEIGHT, INPUT_IMG_WIDTH, CV_8UC3)
+    , input_mat_(std::vector<int>{1, 3, INPUT_IMG_HEIGHT, INPUT_IMG_WIDTH}, CV_32F, cv::Scalar(0.f))
+{
+    rectConfidenceThreshold = confidence;
+    iouThreshold = iou;
+    Ort::AllocatorWithDefaultOptions allocator;
+    Ort::AllocatedStringPtr input_name = session_.GetInputNameAllocated(0, allocator);
+    input_node_name_ = std::string(input_name.get()); 
+    inputNodeNames[0] = input_node_name_.c_str(); 
+    inputNodeDims = { 1, 3, INPUT_IMG_HEIGHT, INPUT_IMG_WIDTH };
+
+    Ort::AllocatedStringPtr output_name = session_.GetOutputNameAllocated(0, allocator);
+    output_node_name_ = std::string(output_name.get());
+    outputNodeNames[0] = output_node_name_.c_str();
+    mOutputDims = session_.GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape();
+
+    output_mat_ = cv::Mat(mOutputDims[1], mOutputDims[2], CV_32F);
+
+
+    input_val_ = Ort::Value::CreateTensor<float>(allocator_info, input_mat_.ptr<float>(), 
+        input_mat_.total(), inputNodeDims.data(), inputNodeDims.size());
+    output_val_ = Ort::Value::CreateTensor<float>(allocator_info, output_mat_.ptr<float>(0), 
+        output_mat_.total(), mOutputDims.data(), mOutputDims.size());
+
+}
+
+std::vector<Reframer::DetectedPeople> Reframer::run(const cv::Mat &frame)
+{
+    auto p = input_mat_.ptr(0);
+    // Make sure input_mat_ is exactly the right size and type before creating the tensor
+    cv::Mat temp_blob;
+    cv::dnn::blobFromImage(frame, temp_blob, 1/255.0, cv::Size(INPUT_IMG_WIDTH, INPUT_IMG_HEIGHT), cv::Scalar());
+    temp_blob.copyTo(input_mat_);  // Copy into pre-allocated Mat
+    assert (input_mat_.ptr(0) == p);
+    p = output_mat_.ptr(0);
+    session_.Run(Ort::RunOptions{nullptr}, 
+        inputNodeNames, &input_val_, 1, 
+        outputNodeNames, &output_val_, 1);
+    assert (output_mat_.ptr(0) == p);
+    std::vector<Reframer::DetectedPeople> detectedPeople;
+    extract_detections(detectedPeople);
+    return detectedPeople;
 }

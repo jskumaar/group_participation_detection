@@ -1,7 +1,11 @@
+// if using mac, convert wstrings to strings. opposite if windows
+
+
 #include "tracker.h"
 
-#define M_PI 3.14159265358979323846
 
+// NEED FOR WINDOWS
+#define M_PI 3.14159265358979323846
 
 namespace fs = std::filesystem;
 
@@ -10,9 +14,6 @@ OPNetTracker::OPNetTracker(){
         std::cerr << "Failed to initialize OPNetTracker." << std::endl;
         exit(1);
     }
-    fs::path exe_dir = fs::current_path().parent_path().parent_path();
-    std::string yolo_path = (exe_dir / "models" / "yolov5s.onnx").string();
-    net = cv::dnn::readNet(yolo_path.c_str());
 }
 
 bool OPNetTracker::initialize() {
@@ -21,12 +22,24 @@ bool OPNetTracker::initialize() {
         Ort::SessionOptions session_options;
         session_options.SetInterOpNumThreads(2);
         session_options.SetIntraOpNumThreads(1);
+        session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         allocator_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
         fs::path exe_dir = fs::current_path().parent_path().parent_path();
+        //MAC
+        // std::string model_path = (exe_dir / L"models" / L"head-localizer.onnx").string();
+        //WINDOWS 
         std::wstring model_path = (exe_dir / L"models" / L"head-localizer.onnx").wstring();
         localizer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
+        //MAC
+        // model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").string();
+        //WINDOWS
         model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").wstring();
         poseestimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
+        //MAC
+        // model_path = (exe_dir / L"models" / L"yolo11n.onnx").string();
+        //WINDOWS
+        model_path = (exe_dir / L"models" / L"yolo11n.onnx").wstring();
+        reframer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options), CONFIDENCE_THRESHOLD, NMS_THRESHOLD);
     }
     catch (const Ort::Exception &e)
     {
@@ -42,7 +55,36 @@ bool OPNetTracker::initialize() {
     return true;
 }
 
+CamIntrinsics make_intrinsics(const cv::Mat& img, int fov)
+{
+    const int w = img.cols, h = img.rows;
+    const double diag_fov = fov * M_PI / 180.;
+    const double fov_w = 2.*atan(tan(diag_fov/2.)/sqrt(1. + h/(double)w * h/(double)w));
+    const double fov_h = 2.*atan(tan(diag_fov/2.)/sqrt(1. + w/(double)h * w/(double)h));
+    const double focal_length_w = 1. / tan(.5 * fov_w);
+    const double focal_length_h = 1. / tan(.5 * fov_h);
+    /*  a
+      ______  <--- here is sensor area
+      |    /
+      |   /
+    f |  /
+      | /  2 x angle is the fov
+      |/
+        <--- here is the hole of the pinhole camera
 
+      So, a / f = tan(fov / 2)
+      => f = a/tan(fov/2)
+      What is a?
+      1 if we define f in terms of clip space where the image plane goes from -1 to 1. Because a is the half-width.
+    */
+
+    return {
+        (float)focal_length_w,
+        (float)focal_length_h,
+        (float)fov_w,
+        (float)fov_h
+    };
+}
 
 cv::Quatf image_to_world(cv::Quatf q)
 {
@@ -68,6 +110,7 @@ cv::Rect make_crop_rect_for_aspect(const cv::Size &size, int aspect_w, int aspec
         return cv::Rect(0, (h - new_h)/2, w, new_h);
     }
 }
+
 cv::Rect make_crop_rect_multiple_of(const cv::Size &size, int multiple)
 {
     const int new_w = (size.width / multiple) * multiple;
@@ -80,6 +123,65 @@ cv::Rect make_crop_rect_multiple_of(const cv::Size &size, int multiple)
     );
 }
 
+cv::Vec3f image_to_world(float x, float y, float size, float reference_size_in_mm, const cv::Size2i& image_size, const CamIntrinsics& intrinsics)
+{
+
+    const float head_size_vertical = 2.f*size;  // Size from the model is more like half the real vertical size of a human head.
+    const float xpos = -(intrinsics.focal_length_w * image_size.width * 0.5f) / head_size_vertical * reference_size_in_mm;
+    const float zpos = (x / image_size.width * 2.f - 1.f) * xpos / intrinsics.focal_length_w;
+    const float ypos = (y / image_size.height * 2.f - 1.f) * xpos / intrinsics.focal_length_h;
+    return {xpos, ypos, zpos};
+}
+
+cv::Quatf rotation_from_two_vectors(const cv::Vec3f &a, const cv::Vec3f &b)
+{
+    // |axis| = |a| * |b| * sin(alpha)
+    const cv::Vec3f axis = a.cross(b);
+    // dot = |a|*|b|*cos(alpha)
+    const float dot = a.dot(b);
+    const float len = cv::norm(axis);
+    cv::Vec3f normed_axis = axis / len;
+    float angle = std::atan2(len, dot);
+    if (!(std::isfinite(normed_axis[0]) && std::isfinite(normed_axis[1]) && std::isfinite(normed_axis[2])))
+    {
+        angle = 0.f;
+        normed_axis = cv::Vec3f{1.,0.,0.};
+    }
+    return cv::Quatf::createFromAngleAxis(angle, normed_axis);
+}
+
+cv::Quatf compute_rotation_correction(const cv::Point3f& p)
+{
+    return rotation_from_two_vectors(
+        {-1.f,0.f,0.f}, p);
+}
+
+RawPose OPNetTracker::transform_to_world_pose(const cv::Quatf &face_rotation, const cv::Point2f& face_xy, const float face_size)
+{
+    const cv::Vec3f face_world_pos = image_to_world(
+        face_xy.x, face_xy.y, face_size, HEAD_SIZE_MM,
+        grayscale.size(),
+        intrinsics_);
+
+    const cv::Quatf rot_correction = compute_rotation_correction(
+        face_world_pos);
+
+    cv::Quatf rot = rot_correction * image_to_world(face_rotation);
+
+    // But this is in general not the location of the rotation joint in the neck.
+    // So we need an extra offset. Which we determine by computing
+    // z,y,z-pos = head_joint_loc + R_face * offset
+    // const vec3 local_offset = vec3{
+    //     static_cast<float>(settings_.offset_fwd),
+    //     static_cast<float>(settings_.offset_up),
+    //     static_cast<float>(settings_.offset_right)};
+    // const vec3 offset = rotate(rot, local_offset);
+    // const vec3 pos = face_world_pos + offset;
+
+    return { rot, face_world_pos };
+}
+
+
 void OPNetTracker::prepare_input_image(cv::Mat &img){
     if (img.rows*4 != img.cols*3)
     {
@@ -88,7 +190,7 @@ void OPNetTracker::prepare_input_image(cv::Mat &img){
 
     img = img(make_crop_rect_multiple_of(img.size(), 4));
 
-        if (img.cols > 640)
+    if (img.cols > 640)
     {
         cv::pyrDown(img, downsized_original_images_[0]);
         img = downsized_original_images_[0];
@@ -101,17 +203,20 @@ void OPNetTracker::prepare_input_image(cv::Mat &img){
     cv::cvtColor(img, grayscale, cv::COLOR_BGR2GRAY);
 }
 
-rotation_output OPNetTracker::run(cv::Mat frame){
+Pose OPNetTracker::run(cv::Mat frame, int fov){
     prepare_input_image(frame);
-
+    intrinsics_ = make_intrinsics(frame, fov);
     return detect();
 }
 
-rotation_output OPNetTracker::detect(){
+
+Pose OPNetTracker::detect(){
     auto [p, rect] = localizer_->run(grayscale);
     auto face = poseestimator_->run(grayscale, rect);
-    auto pose = image_to_world((*face).rotation);
-    auto rot_mat = pose.toRotMat3x3(cv::QUAT_ASSUME_UNIT);
+
+    RawPose raw_pose = transform_to_world_pose((*face).rotation, (*face).center, (*face).size);
+
+    auto rot_mat = raw_pose.rotation.toRotMat3x3(cv::QUAT_ASSUME_UNIT);
 
     const auto& mx = rot_mat.col(0);
     const auto& my = rot_mat.col(1);
@@ -125,81 +230,45 @@ rotation_output OPNetTracker::detect(){
 
     constexpr double rad2deg = 180/M_PI;
 
-    return {(float)(yaw*rad2deg), (float)(pitch*rad2deg), (float)(roll*-rad2deg)};
+    return {(float)(yaw*rad2deg), (float)(pitch*rad2deg), (float)(roll*-rad2deg), (float)(-raw_pose.position[2]*0.1), (float)(raw_pose.position[1]*0.1), (float)(-raw_pose.position[0]*0.1)};
 }
 
-std::vector<cv::Mat> OPNetTracker::pre_process(const cv::Mat& input_image) {
-    cv::Mat blob;
-    cv::dnn::blobFromImage(input_image, blob, 1. / 255., cv::Size(INPUT_WIDTH, INPUT_HEIGHT), cv::Scalar(), true, false);
-    net.setInput(blob);
+cv::Mat OPNetTracker::yolo_scale(cv::Mat& img) {
+    cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
 
-    std::vector<cv::Mat> outputs;
-    net.forward(outputs, net.getUnconnectedOutLayersNames());
-    return outputs;
-}
-
-// Postprocess outputs — no class name vector needed
-std::vector<Detection> OPNetTracker::post_process(const cv::Mat& input_image, std::vector<cv::Mat>& outputs) {
-    std::vector<Detection> results;
-    float x_factor = input_image.cols / INPUT_WIDTH;
-    float y_factor = input_image.rows / INPUT_HEIGHT;
-    float* data = (float*)outputs[0].data;
-
-    const int dimensions = 85;  // x, y, w, h, obj_conf, 80 class scores
-    const int rows = 25200;
-
-    for (int i = 0; i < rows; ++i) {
-        float confidence = data[4];
-        if (confidence >= CONFIDENCE_THRESHOLD) {
-            float* classes_scores = data + 5;
-            cv::Point class_id;
-            double max_class_score;
-            cv::minMaxLoc(cv::Mat(1, 80, CV_32FC1, classes_scores), 0, &max_class_score, 0, &class_id);
-            if (max_class_score > SCORE_THRESHOLD) {
-                int id = class_id.x;
-                if (id == 0) {  // Only keep people
-                    float cx = data[0];
-                    float cy = data[1];
-                    float w = data[2];
-                    float h = data[3];
-                    int left = int((cx - 0.5 * w) * x_factor);
-                    int top = int((cy - 0.5 * h) * y_factor);
-                    int width = int(w * x_factor);
-                    int height = int(h * y_factor);
-
-                    results.push_back({ cv::Rect(left, top, width, height), confidence, id});
-                }
-            }
-        }
-        data += dimensions;
+    if (img.cols >= img.rows)
+    {
+        resizeScales = img.cols / (float)INPUT_IMG_WIDTH;
+        cv::resize(img, img, cv::Size(INPUT_IMG_WIDTH, int(img.rows / resizeScales)));
     }
-
-    return results;
+    else
+    {
+        resizeScales = img.rows / (float)INPUT_IMG_HEIGHT;
+        cv::resize(img, img, cv::Size(int(img.cols / resizeScales), INPUT_IMG_HEIGHT));
+    }
+    cv::Mat tempImg = cv::Mat::zeros(INPUT_IMG_HEIGHT, INPUT_IMG_WIDTH, CV_8UC3);
+    padX = (INPUT_IMG_WIDTH - img.cols) / 2;
+    padY = (INPUT_IMG_HEIGHT - img.rows) / 2;
+    img.copyTo(tempImg(cv::Rect(padX, padY, img.cols, img.rows)));
+    return tempImg;
 }
 
-std::vector<cv::Rect> OPNetTracker::detect_people_in_frame(const cv::Mat &frame) {
-    std::vector<cv::Mat> detections = pre_process(frame);
-    std::vector<Detection> people = post_process(frame, detections);
-
-    // Prepare for NMS
+std::vector<cv::Rect> OPNetTracker::yolo_unscale(std::vector<Reframer::DetectedPeople> &detections){
     std::vector<cv::Rect> boxes;
-    std::vector<float> confidences;
-    for (const auto &det : people) {
-        boxes.push_back(det.box);
-        confidences.push_back(det.confidence);
+    for (auto& det : detections) {
+        // Unscale the bounding box
+        det.bbox.x = static_cast<int>((det.bbox.x - padX) * resizeScales);
+        det.bbox.y = static_cast<int>((det.bbox.y - padY) * resizeScales);
+        det.bbox.width = static_cast<int>(det.bbox.width * resizeScales);
+        det.bbox.height = static_cast<int>(det.bbox.height * resizeScales);
+        boxes.push_back(det.bbox);
     }
+    return boxes;
+}
 
-    // Apply NMS
-    std::vector<int> indices;
-    cv::dnn::NMSBoxes(boxes, confidences, CONFIDENCE_THRESHOLD, NMS_THRESHOLD, indices);
-
-    // Gather final boxes
-    std::vector<cv::Rect> final_boxes;
-    for (int idx : indices) {
-        final_boxes.push_back(boxes[idx]);
-    }
-
-    std::cout << "Detected " << final_boxes.size() << " people." << std::endl;
-
-    return final_boxes;
+std::vector<cv::Rect> OPNetTracker::run_yolo(cv::Mat frame){
+    frame = frame.clone();
+    frame = yolo_scale(frame);
+    auto data = reframer_->run(frame);
+    return yolo_unscale(data);
 }

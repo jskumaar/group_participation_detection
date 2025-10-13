@@ -21,8 +21,8 @@ int main() {
         }
 
         cv::imshow("Live Camera Feed", frame);  // Show the frame in a window
-        rotation_output pose = tracker.run(frame);
-        printf("Yaw: %.2f, Pitch: %.2f, Roll: %.2f\n", pose.yaw, pose.pitch, pose.roll);
+        Pose pose = tracker.run(frame, 80);
+        printf("Yaw: %.2f, Pitch: %.2f, Roll: %.2f, X: %.2f, Y: %.2f, Z: %.2f\n", pose.yaw, pose.pitch, pose.roll, pose.x, pose.y, pose.z);
         // Exit on ESC key
         if (cv::waitKey(1) == 27) {
             break;

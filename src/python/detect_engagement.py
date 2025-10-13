@@ -4,12 +4,20 @@ from datetime import datetime
 from ultralytics import YOLO
 import mediapipe as mp
 import sys
+from collections import deque
+
 
 # =========================
 # CONFIG
 # =========================
 USE_CAMERA = False                 # Set to False to read from file
-VIDEO_FILE_PATH = r"G:\My Drive\Research\(Shared) Project_mixed_group_interaction\Pilot_data_collection\Session_1\Pilot_1_360_hd.mp4"    # Path to mp4 if not using camera
+VIDEO_FILE_PATH = r"G:\My Drive\Research\(Shared) Project_mixed_group_interaction\Pilot_data_collection\Session_1\Pilot_1_360_hd_interaction.mp4"    # Path to mp4 if not using camera
+
+
+CSV_BUFFER = []
+CSV_FLUSH_INTERVAL = 50   # write every 50 frames (tune as needed)
+
+COLORS = [(0,0,255), (0,255,0), (255,0,0), (0,255,255)]
 
 
 YOLO_INTERVAL_SEC   = 10.0
@@ -41,8 +49,8 @@ EQUIRECT_DISPLAY_MAX_W = 1280
 
 # New toggles
 SHOW_FACE_BBOX       = True
-SHOW_PERSON_BBOX     = False
-SAVE_COMPARISONS     = True
+SHOW_PERSON_BBOX     = True
+SAVE_COMPARISONS     = False
 SAVE_EQUIRECT_PREVIEW = True
 
 # =========================
@@ -70,6 +78,10 @@ PREFERRED_NAMES = [
     "Insta360",
     "OBS-Camera",
 ]
+
+
+GAZE_HISTORY = deque(maxlen=30)   # average over past 30 frames (adjust N)
+
 
 # ---------- camera find helpers ----------
 def _open_dshow_by_name(name, width=None, height=None):
@@ -287,6 +299,51 @@ def fov_from_bbox_exact(bbox, center_px, W, H, out_w, out_h):
     return math.degrees(hfov)
 
 
+# -------------- gaze metrics helpers --------------
+def bbox_to_spherical(bbox, W, H):
+    x1, y1, x2, y2 = bbox
+    lam1, phi1 = _lonlat_from_px(x1, y1, W, H)
+    lam2, phi2 = _lonlat_from_px(x2, y2, W, H)
+    lam_min, lam_max = sorted([lam1, lam2])
+    phi_min, phi_max = sorted([phi1, phi2])
+    return lam_min, lam_max, phi_min, phi_max
+
+
+def gaze_hits_bbox(gaze_vec, bbox, W, H, tol_deg=5.0):
+    # gaze vector → lon/lat
+    Dx, Dy, Dz = gaze_vec
+    lam_g = math.atan2(Dz, Dx)
+    phi_g = math.asin(np.clip(Dy, -1.0, 1.0))
+    
+    # bbox → spherical bounds
+    lam_min, lam_max, phi_min, phi_max = bbox_to_spherical(bbox, W, H)
+    
+    # add tolerance
+    tol = math.radians(tol_deg)
+    return (lam_min - tol <= lam_g <= lam_max + tol and
+            phi_min - tol <= phi_g <= phi_max + tol)
+
+
+def compute_gaze_matrix(detections, head_poses, W, H):
+    """
+    detections: list of YOLO outputs (each has bbox, center, conf)
+    head_poses: list of (f_vec, ...) for each detection
+    Returns NxN matrix: G[i][j] = 1 if i looks at j
+    """
+    N = len(detections)
+    G = np.zeros((N, N), dtype=int)
+
+    for i, (det_i, pose_i) in enumerate(zip(detections, head_poses)):
+        if pose_i is None:
+            continue
+        f_vec = pose_i  # forward vector from PnP
+        for j, det_j in enumerate(detections):
+            if i == j:
+                continue  # skip self
+            if gaze_hits_bbox(f_vec, det_j["bbox"], W, H):
+                G[i, j] = 1
+    return G
+
 # ---------- detection ----------
 def load_yolo(model_path):
     return YOLO(model_path)
@@ -303,6 +360,35 @@ def detect_persons(bgr, model, conf=0.35, imgsz=960):
         v = (y1 + y2) / 2.0
         out.append({"bbox": [int(x1), int(y1), int(x2), int(y2)], "center": [u, v], "conf": float(c)})
     return out
+
+def select_top3_by_size(detections):
+    # Sort by bbox area (descending)
+    dets_sorted = sorted(detections,
+                         key=lambda d: (d["bbox"][2]-d["bbox"][0]) * (d["bbox"][3]-d["bbox"][1]),
+                         reverse=True)
+    return dets_sorted[:3]
+
+
+# ---------- viz helpers ----------
+
+def draw_gaze_matrix_arrows(frame, detections, G, color=(255,0,0)):
+    """
+    frame: equirect image (BGR)
+    detections: list of detections with 'center' (u,v)
+    G: NxN gaze matrix (int or float)
+    """
+    for i, d_i in enumerate(detections):
+        u_i, v_i = map(int, d_i["center"])
+        for j, d_j in enumerate(detections):
+            if i == j or G[i, j] <= 0.5:  # skip self or weak gaze
+                continue
+            u_j, v_j = map(int, d_j["center"])
+            cv2.arrowedLine(frame, (u_i, v_i), (u_j, v_j),
+                COLORS[i % len(COLORS)], 2, tipLength=0.15)
+            
+
+
+
 
 # ---------- main ----------
 def main():
@@ -346,13 +432,20 @@ def main():
 
         if (t_now - last_yolo_t) >= YOLO_INTERVAL_SEC:
             current_dets = detect_persons(frame, yolo, conf=YOLO_CONF_THRESHOLD, imgsz=YOLO_IMGSZ)
+            current_dets = select_top3_by_size(current_dets)
+            for pid, d in enumerate(current_dets, start=1):
+                d["id"] = f"P{pid}"
+                d["color"] = COLORS[(pid-1) % len(COLORS)]
             last_yolo_t = t_now
 
         equi_with_pose = frame.copy()
         if SHOW_PERSON_BBOX:
             for d in current_dets:
                 x1, y1, x2, y2 = d["bbox"]
-                cv2.rectangle(equi_with_pose, (x1, y1), (x2, y2), (0,255,0), 2)
+                color = d["color"]
+                cv2.rectangle(equi_with_pose, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(equi_with_pose, d["id"], (x1, max(20, y1-10)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
         if (t_now - last_pose_t) >= POSE_INTERVAL_SEC and current_dets:
             for pid, d in enumerate(current_dets, start=1):
@@ -360,6 +453,7 @@ def main():
                 hfov_deg = fov_from_bbox_exact(d["bbox"], (u, v), W, H, GNOMONIC_OUT_W, GNOMONIC_OUT_H)
                 crop = equirect_to_gnomonic(frame, center_px=(u, v), fov_deg=hfov_deg, out_w=GNOMONIC_OUT_W, out_h=GNOMONIC_OUT_H, roll_deg=GNOMONIC_ROLL_DEG)
                 pose = estimate_head_pose_with_visuals(crop)
+
                 if pose:
                     pitch, yaw, roll, head_box, nose_tip, nose_end, rvec = pose
                     r_vec, u_vec, f_vec = _basis_from_forward(_dir_from_lonlat(*_lonlat_from_px(u, v, W, H)))
@@ -370,14 +464,72 @@ def main():
                     if SHOW_FACE_BBOX:
                         corners_crop = [(head_box[0], head_box[1]), (head_box[2], head_box[1]), (head_box[2], head_box[3]), (head_box[0], head_box[3])]
                         corners_eq = [dir_to_equirect_px(crop_px_to_global_dir(cx, cy, GNOMONIC_OUT_W, GNOMONIC_OUT_H, hfov_deg, r_vec, u_vec, f_vec), W, H) for cx, cy in corners_crop]
-                        cv2.polylines(equi_with_pose, [np.array(corners_eq, np.int32)], isClosed=True, color=(0,255,255), thickness=2)
-                        cv2.arrowedLine(equi_with_pose, base_px, end_px, (0,0,255), 2)
+                        cv2.polylines(equi_with_pose, [np.array(corners_eq, np.int32)], isClosed=True, color=color, thickness=2)
+                        cv2.arrowedLine(equi_with_pose, base_px, end_px, color, 2, tipLength=0.25)
+                    
                     if SAVE_COMPARISONS:
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                         cv2.imwrite(os.path.join(SAVE_DIR, f"gnomonic_{pid}_{ts}.jpg"), crop)
                         # cv2.imwrite(os.path.join(SAVE_DIR, f"equi_{pid}_{ts}.jpg"), equi_with_pose)
                         cv2.imwrite(os.path.join(SAVE_DIR, f"equi_{pid}_{ts}.jpg"), frame)
+
+                all_head_poses = []
+                for pid, d in enumerate(current_dets, start=1):
+                    # ... your crop + head pose code ...
+                    if pose:
+                        pitch, yaw, roll, head_box, nose_tip, nose_end, rvec = pose
+                        f_vec = _unit(f_vec)  # already from your projection step
+                        all_head_poses.append(f_vec)
+                    else:
+                        all_head_poses.append(None)
+
+                # Now compute NxN gaze matrix
+                G = compute_gaze_matrix(current_dets, all_head_poses, W, H)
+                print("Gaze matrix:\n", G)
+
+                # Save current frame's gaze matrix
+                GAZE_HISTORY.append(G)
+
+                # Compute average over history
+                if len(GAZE_HISTORY) > 0:
+                    avg_G = np.mean(GAZE_HISTORY, axis=0)   # elementwise average
+                else:
+                    avg_G = None
+
+                for i in range(len(current_dets)):
+                    row = [datetime.now().isoformat(), frame_idx, i+1]
+                    row += list(G[i])  # instantaneous matrix row
+                    if avg_G is not None:
+                        row += list(np.round(avg_G[i], 3))  # averaged (rounded)
+                    CSV_BUFFER.append(row)
+
+                y_offset = 30
+
+                for i, d_i in enumerate(current_dets):
+                    for j, d_j in enumerate(current_dets):
+                        if i != j and G[i, j] == 1:
+                            txt = f"{d_i['id']} → {d_j['id']}"
+                            cv2.putText(equi_with_pose, txt, (50, y_offset),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, d_i["color"], 2)
+                            y_offset += 25
+
+                            # highlight target box with gazer’s color
+                            x1, y1, x2, y2 = d_j["bbox"]
+                            cv2.rectangle(equi_with_pose, (x1, y1), (x2, y2), d_i["color"], 2)
+
+                if frame_idx % CSV_FLUSH_INTERVAL == 0 and CSV_BUFFER:
+                    with open(csv_path, "a", newline="") as f:
+                        writer = csv.writer(f)
+                        writer.writerows(CSV_BUFFER)
+                    CSV_BUFFER.clear()
+                    print(f"[INFO] Flushed {CSV_FLUSH_INTERVAL} rows to CSV.")
+
+                # Draw gaze arrows
+                if SHOW_EQUIRECT_WINDOW and len(current_dets) > 1:
+                    draw_gaze_matrix_arrows(equi_with_pose, current_dets, G)
+
             last_pose_t = t_now
+
 
         if SHOW_EQUIRECT_WINDOW:
             disp_w = min(EQUIRECT_DISPLAY_MAX_W, W)
@@ -387,6 +539,15 @@ def main():
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
+    
+    # Final flush
+    if CSV_BUFFER:
+        with open(csv_path, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerows(CSV_BUFFER)
+        print(f"[INFO] Final flush: wrote {len(CSV_BUFFER)} rows.")
+
+    
     cap.release()
     cv2.destroyAllWindows()
 

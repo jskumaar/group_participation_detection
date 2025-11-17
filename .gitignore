@@ -7,3 +7,7 @@ src/c_impl/out/
 src/c_impl/onnx/
 src/c_impl/CmakeLists.txt
 src/c_impl/.vs/
+src/python/detections_out/*
+src/python/live_out/*
+src/calib_data/*
+datasets/*src/c_impl/CmakeLists.txt

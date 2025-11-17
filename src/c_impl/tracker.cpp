@@ -24,7 +24,7 @@ bool OPNetTracker::initialize() {
         session_options.SetIntraOpNumThreads(1);
         session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         allocator_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-        fs::path exe_dir = fs::current_path().parent_path().parent_path();
+        fs::path exe_dir = fs::current_path().parent_path().parent_path().parent_path();
         //MAC
         // std::string model_path = (exe_dir / L"models" / L"head-localizer.onnx").string();
         //WINDOWS 
@@ -156,6 +156,12 @@ cv::Quatf compute_rotation_correction(const cv::Point3f& p)
         {-1.f,0.f,0.f}, p);
 }
 
+cv::Vec3f rotate(const cv::Quatf& q, const cv::Vec3f& v)
+{
+    cv::Matx33f R = q.toRotMat3x3();  // quaternion → rotation matrix
+    return R * v;                     // apply rotation
+}
+
 RawPose OPNetTracker::transform_to_world_pose(const cv::Quatf &face_rotation, const cv::Point2f& face_xy, const float face_size)
 {
     const cv::Vec3f face_world_pos = image_to_world(
@@ -163,22 +169,18 @@ RawPose OPNetTracker::transform_to_world_pose(const cv::Quatf &face_rotation, co
         grayscale.size(),
         intrinsics_);
 
-    const cv::Quatf rot_correction = compute_rotation_correction(
-        face_world_pos);
+    const cv::Quatf rot_correction = compute_rotation_correction(face_world_pos);
 
     cv::Quatf rot = rot_correction * image_to_world(face_rotation);
 
     // But this is in general not the location of the rotation joint in the neck.
     // So we need an extra offset. Which we determine by computing
     // z,y,z-pos = head_joint_loc + R_face * offset
-    // const vec3 local_offset = vec3{
-    //     static_cast<float>(settings_.offset_fwd),
-    //     static_cast<float>(settings_.offset_up),
-    //     static_cast<float>(settings_.offset_right)};
-    // const vec3 offset = rotate(rot, local_offset);
-    // const vec3 pos = face_world_pos + offset;
+    const cv::Vec3f local_offset = cv::Vec3f{-100, 0, 0};
+    const cv::Vec3f offset = rotate(rot, local_offset);
+    const cv::Vec3f pos = face_world_pos + offset;
 
-    return { rot, face_world_pos };
+    return { rot, pos };
 }
 
 
@@ -230,7 +232,7 @@ Pose OPNetTracker::detect(){
 
     constexpr double rad2deg = 180/M_PI;
 
-    return {(float)(yaw*rad2deg), (float)(pitch*rad2deg), (float)(roll*-rad2deg), (float)(-raw_pose.position[2]*0.1), (float)(raw_pose.position[1]*0.1), (float)(-raw_pose.position[0]*0.1)};
+    return {(float)(yaw*rad2deg), (float)(pitch*rad2deg), (float)(roll*-rad2deg), (float)(-raw_pose.position[2]*0.1), (float)(raw_pose.position[1]*0.1), (float)(-raw_pose.position[0]*0.1), p};
 }
 
 cv::Mat OPNetTracker::yolo_scale(cv::Mat& img) {
@@ -267,7 +269,7 @@ std::vector<cv::Rect> OPNetTracker::yolo_unscale(std::vector<Reframer::DetectedP
 }
 
 std::vector<cv::Rect> OPNetTracker::run_yolo(cv::Mat frame){
-    frame = frame.clone();
+	frame = frame.clone();
     frame = yolo_scale(frame);
     auto data = reframer_->run(frame);
     return yolo_unscale(data);

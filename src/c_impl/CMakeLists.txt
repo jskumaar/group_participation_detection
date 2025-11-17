@@ -24,8 +24,8 @@ set(SOURCES
     tracker.cpp
     SORT.cpp
     360_image_process.cpp
-    model_test.cpp
-    # main.cpp
+    #model_test.cpp
+    main.cpp
     ${CMAKE_SOURCE_DIR}/sort-cpp/sort-c++/KalmanTracker.cpp
     ${CMAKE_SOURCE_DIR}/sort-cpp/sort-c++/Hungarian.cpp
 )

@@ -5,6 +5,8 @@
 #include <iostream>
 #include <vector>
 #include <cstdio>
+#include <algorithm>
+#include <string>
 
 
 // NEED FOR WINDOWS
@@ -15,21 +17,18 @@ OPNetTracker tracker;
 
 #define GLOBAL_FRAME_WIDTH 2880
 #define GLOBAL_FRAME_HEIGHT 1440
-#define num_people 3
+#define LOCALIZER_THRESHOLD 0.5
 
 
-// RUNNING Yolo and SORT iff first frame or local izer confidence is low
-#define localizer_confidence 0.0
-#define CONFIDENCE_THRESHOLD 0.3
+Sort object_tracker;
+std::vector<Sort::Track> tracks;
 
-
-
-void visualize(FILE* gp, int R, std::vector<PanoViewer::gaze> gazes){
+void visualize(FILE* gp, int R, std::vector<PanoViewer::gaze> gazes) {
 
     // Draw loop (could be in a while(true) for realtime)
     fprintf(gp, "splot '-' with points pt 7 lc rgb 'black' title 'Sphere',"
-                "'-' with points pt 7 ps 1.5 lc rgb 'red' title 'People',"
-                "'-' with vectors nohead lc rgb 'blue' title 'Gaze'\n");
+        "'-' with points pt 7 ps 1.5 lc rgb 'red' title 'People',"
+        "'-' with vectors nohead lc rgb 'blue' title 'Gaze'\n");
 
     // Sphere points (mesh)
     int n_theta = 40, n_phi = 20;
@@ -51,28 +50,18 @@ void visualize(FILE* gp, int R, std::vector<PanoViewer::gaze> gazes){
     fprintf(gp, "e\n");
 
     for (auto& p : gazes) {
-        double gx = p.start.x + p.direction[0] * 100;
-        double gy = p.start.y + p.direction[1] * 100; 
-        double gz = p.start.z + p.direction[2] * 100;
+        double gx = p.start.x + p.direction[0] * 200;
+        double gy = p.start.y + p.direction[1] * 200;
+        double gz = p.start.z + p.direction[2] * 200;
         fprintf(gp, "%f %f %f %f %f %f\n", p.start.x, p.start.y, p.start.z, gx - p.start.x, gy - p.start.y, gz - p.start.z);
     }
-    fprintf(gp, "e\n"); 
+    fprintf(gp, "e\n");
     fflush(gp);
 }
 
 
-
-void yolo_plus_sort(cv::Mat frame, Sort& object_tracker, std::vector<Sort::Track>& tracks){
-    std::vector<cv::Rect> people = tracker.run_yolo(frame);
-    tracks = object_tracker.update(people);
-
-}
-
 int main() {
 
-    Sort object_tracker;
-    std::vector<Sort::Track> tracks;
-    
     // change based on where ur vid is located
     // Atindrah's video path
     // char* vid_path = "/Users/atind/Downloads/demo_1_stitched.mp4";
@@ -82,13 +71,19 @@ int main() {
     if (!cap.isOpened()) {
         std::cerr << "Error: Cannot open camera input 1. Trying input 0..." << std::endl;
     }
+
+
     cap.set(cv::CAP_PROP_FRAME_WIDTH, GLOBAL_FRAME_WIDTH);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, GLOBAL_FRAME_HEIGHT);
+    //cap.set(cv::CAP_PROP_POS_FRAMES, 100);
+    cap.set(cv::CAP_PROP_POS_FRAMES, 6780);
 
     cv::Mat pano_frame;
 
     cv::namedWindow("360° Viewer", cv::WINDOW_NORMAL);  // Changed from WINDOW_AUTOSIZE
     cv::resizeWindow("360° Viewer", 640, 480);
+    //cv::namedWindow("Perspective View", cv::WINDOW_NORMAL);  // Changed from WINDOW_AUTOSIZE
+    //cv::resizeWindow("Perspective View", 640, 480);
 
 
 
@@ -103,9 +98,9 @@ int main() {
     fprintf(gp, "set term wxt size 800,600\n");
     fprintf(gp, "set view equal xyz\n");
     fprintf(gp, "set view 60, 30\n");
-    fprintf(gp, "set xrange [-%d:%d]\n", 100, 100);
-    fprintf(gp, "set yrange [-%d:%d]\n", 100, 100);
-    fprintf(gp, "set zrange [-%d:%d]\n", 100, 100);
+    fprintf(gp, "set xrange [-%d:%d]\n", 200, 200);
+    fprintf(gp, "set yrange [-%d:%d]\n", 200, 200);
+    fprintf(gp, "set zrange [-%d:%d]\n", 200, 200);
     fprintf(gp, "set ticslevel 0\n");
 
     fprintf(gp, "set xlabel 'X (Right)'\n");
@@ -113,9 +108,8 @@ int main() {
     fprintf(gp, "set zlabel 'Z (Forward)'\n");
 
     std::vector<PanoViewer::gaze> gazes;
-    size_t frame_count = 0;
-    cv::Mat perspective_view;
     std::vector<cv::Rect> people;
+    cv::Mat perspective_view;
 
     // array of gaze_windows based on index per person
 
@@ -127,103 +121,73 @@ int main() {
     //     gaze_windows[i].counts.resize(num_people, 0);
     //     gaze_windows[i].sights.clear();
     // }
-
-    yolo_plus_sort(pano_frame, object_tracker, tracks);
+    float localizer_confidence = 0;
     while (true) {
         cap >> pano_frame;
-        cv::resize(pano_frame, pano_frame, cv::Size(2880,1440)); // new width, height
-        if (localizer_confidence<CONFIDENCE_THRESHOLD) {
-            yolo_plus_sort(pano_frame, object_tracker, tracks);
-        }
 
 
-        if (pano_frame.empty()) {
-            std::cerr << "Failed to capture frame!" << std::endl;
-            break;
+        if (localizer_confidence < LOCALIZER_THRESHOLD) {
+            printf("YOLO Running");
+            people = tracker.run_yolo(pano_frame);
+            tracks = object_tracker.update(people, pano_frame.rows, pano_frame.cols, viewer);
+            localizer_confidence = 1;
         }
-        // Ensure we have the right aspect ratio (2:1 for equirectangular)
-        if (pano_frame.cols / (float)pano_frame.rows != 2.0f) {
-            printf("Error: Incorrect aspect ratio\n");
-            exit(1);
-        }
-        // if(frame_count % 10 == 0){
-        //     printf("Running YOLO on frame %zu\n", frame_count);
-        //     people = tracker.run_yolo(pano_frame);
-        // }
-        
-        
-        // std::vector<Sort::Track> tracks = object_tracker.update(people);
-        
-        
+
         // Generate perspective view
          // Counter for unique window names
-        //person 0 = suresh
-        //person 1 = naveen
-        //person 2 = other
-        cv::Scalar color;
-        for(const Sort::Track& track : tracks){
-            int person_id = track.id - 1; // IDs start at 1
-            cv::Rect person = track.box;
-            if(person_id == 0){
-                viewer.setFOV(55);
-                color = cv::Scalar (255, 0, 0);
-            }
-            else if(person_id == 1){
-                viewer.setFOV(30);
-                color = cv::Scalar (0, 255, 0);
-            }
-            else if(person_id == 2){
-                viewer.setFOV(40);
-                color = cv::Scalar (0, 0, 255);
-            }
-        // Generate perspective view
-            int yaw = ((person.x + person.width / 2) * 0.125) - 180.0;
-            viewer.setYaw(yaw);
+        //cv::Scalar color;
+        for (const Sort::Track& track : tracks) {
+
+            // apply pose and FOV
+            viewer.setYaw(track.yaw);
+            viewer.setPitch(track.pitch);
+            viewer.setFOV(track.fov);
+
+
             perspective_view = viewer.generatePerspectiveView(pano_frame);
-            Pose pose = tracker.run(perspective_view, viewer.getFOV());
-            printf("personID: %d, yaw: %f, pitch: %f, roll: %f, x: %f, y: %f, z: %f\n", person_id, pose.yaw, pose.pitch, pose.roll, pose.position.x, pose.position.y, pose.position.z);
-            PanoViewer::gaze gaze = viewer.addGaze(person_id, pose.yaw, pose.pitch, person);
+            Pose pose = tracker.run(perspective_view, static_cast<int>(viewer.getFOV()));
+            if (pose.confidence < LOCALIZER_THRESHOLD) {
+                localizer_confidence = pose.confidence;
+                continue;
+            }
+            printf("personID: %d, yaw: %f, pitch: %f, roll: %f, x: %f, y: %f, z: %f\n", track.id, pose.yaw, pose.pitch, pose.roll, pose.x, pose.y, pose.z);
+            PanoViewer::gaze gaze = viewer.addGaze(track.id, track.yaw, -track.pitch, track.fov, pose.yaw*1.5, -pose.pitch, cv::Vec3f(pose.x, pose.y, pose.z));
             gazes.push_back(gaze);
-            auto pano_pixel = viewer.rayToPanoPixel(cv::Vec3f(gaze.start.x, gaze.start.y, gaze.start.z),
-                                  gaze.direction,
-                                  90.0f,
-                                  GLOBAL_FRAME_WIDTH,
-                                  GLOBAL_FRAME_HEIGHT);
+        //    //auto pano_pixel = viewer.rayToPanoPixel(cv::Vec3f(gaze.start.x, gaze.start.y, gaze.start.z),
+        //    //    gaze.direction,
+        //    //    pose.z,
+        //    //    GLOBAL_FRAME_WIDTH,
+        //    //    GLOBAL_FRAME_HEIGHT);
 
-            printf("Pano Pixel: x=%d, y=%d\n", pano_pixel.x, pano_pixel.y);
-            // calculates if gaze_pt intersects others' bboxes
-
-           
-
-            
-            int intersect = PanoViewer::bbox_intersections(cv::Point(pano_pixel.x, pano_pixel.y), cv::Point(person.x, person.y), tracks);
-            cv::circle(pano_frame, pano_pixel, 40, color, 2);
-            std::string text = "Person: " + std::to_string(person_id) + " looking at person: " + std::to_string(intersect);
-            cv::putText(pano_frame, text ,  cv::Point(person.x, person.y), cv::FONT_HERSHEY_SIMPLEX,  1.0,  color, 2);
+        //    //printf("Pano Pixel: x=%d, y=%d\n", pano_pixel.x, pano_pixel.y);
 
 
-            cv::rectangle(pano_frame, person, cv::Scalar(0, 255, 0), 2);  // Green rectangle, 2px thick
+        ////    int intersect = PanoViewer::bbox_intersections(cv::Point(pano_pixel.x, pano_pixel.y), cv::Point(person.x, person.y), tracks);
+        ////    cv::circle(pano_frame, pano_pixel, 40, color, 2);
+        ////    std::string text = "Person: " + std::to_string(person_id) + " looking at person: " + std::to_string(intersect);
+        ////    cv::putText(pano_frame, text, cv::Point(person.x, person.y), cv::FONT_HERSHEY_SIMPLEX, 1.0, color, 2);
 
-            // NOT NEEDED FOR TESTING PURPOSES 
-            // PanoViewer::add_frame_to_window(gaze_windows[person_id], person_id, intersect);
-            // PanoViewer::print_gaze_window(gaze_windows[person_id], pano_frame, scaled);
-            person_id++;
+
+        ////    cv::rectangle(pano_frame, person, cv::Scalar(0, 255, 0), 2);  // Green rectangle, 2px thick
+
+        ////    // NOT NEEDED FOR TESTING PURPOSES 
+        ////    // PanoViewer::add_frame_to_window(gaze_windows[person_id], person_id, intersect);
+        ////    // PanoViewer::print_gaze_window(gaze_windows[person_id], pano_frame, scaled);
             perspective_view.release();
         }
         visualize(gp, 90, gazes);
         gazes.clear();
         imshow("360° Viewer", pano_frame);
+        pano_frame.release();
         char key = cv::waitKey(1) & 0xFF;
         if (key == 27) break; // ESC to exit
-        frame_count++;
     }
 
-
     // MAC
-    pclose(gp);
+    // pclose(gp);
     // USE ONE BELOW FOR WINDOWS
-    // c
+    _pclose(gp);
     cap.release();
     cv::destroyAllWindows();
     return 0;
-}   
+}

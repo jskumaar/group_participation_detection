@@ -14,6 +14,7 @@ typedef struct yaw_pitch_roll {
     float x;
     float y;
     float z;
+	float confidence;
 } Pose;
 
 typedef struct RawPose {
@@ -42,6 +43,10 @@ class OPNetTracker {
         ~OPNetTracker() = default;
         Pose run(cv::Mat frame, int fov);
         std::vector<cv::Rect> run_yolo(cv::Mat frame);
+
+        // Expose the reframer/localizer input height for external use
+        static int getInputHeight() { return INPUT_IMG_HEIGHT; }
+
     private:
         bool initialize();
         void prepare_input_image(cv::Mat &img);
@@ -64,7 +69,7 @@ class OPNetTracker {
 
 
         static constexpr float HEAD_SIZE_MM = 200.f;
-        static constexpr float NMS_THRESHOLD = 0.5f;
+        static constexpr float NMS_THRESHOLD = 0.3f;
         static constexpr float CONFIDENCE_THRESHOLD = 0.5f;
         inline static constexpr int INPUT_IMG_WIDTH = 640;
         inline static constexpr int INPUT_IMG_HEIGHT = 640;

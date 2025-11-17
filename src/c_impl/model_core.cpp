@@ -392,6 +392,9 @@ void Reframer::extract_detections(std::vector<Reframer::DetectedPeople>& oResult
         result.bbox = boxes[idx];
         oResult.push_back(result);
     }
+    boxes.clear();
+    confidences.clear();
+    nmsResult.clear();
 }
 
 
@@ -430,7 +433,7 @@ std::vector<Reframer::DetectedPeople> Reframer::run(const cv::Mat &frame)
     auto p = input_mat_.ptr(0);
     // Make sure input_mat_ is exactly the right size and type before creating the tensor
     cv::Mat temp_blob;
-    cv::dnn::blobFromImage(frame, temp_blob, 1/255.0, cv::Size(INPUT_IMG_WIDTH, INPUT_IMG_HEIGHT), cv::Scalar());
+    cv::dnn::blobFromImage(frame, temp_blob, 1/255.0, cv::Size(INPUT_IMG_WIDTH, INPUT_IMG_HEIGHT), cv::Scalar(), false, false);
     temp_blob.copyTo(input_mat_);  // Copy into pre-allocated Mat
     assert (input_mat_.ptr(0) == p);
     p = output_mat_.ptr(0);

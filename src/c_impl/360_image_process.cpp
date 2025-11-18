@@ -23,92 +23,54 @@ cv::Point2f PanoViewer::sphericalToEquirectangular(float theta, float phi, int p
 }
 
 
-    
-// Generate perspective view from panoramic image
-cv::Mat PanoViewer::generatePerspectiveView(const cv::Mat& pano) {
-    cv::Mat output(output_height, output_width, CV_8UC3);
-    
-    
+
+void PanoViewer::buildRemapTables(int pano_cols, int pano_rows) {
+    map_x.create(output_height, output_width, CV_32FC1);
+    map_y.create(output_height, output_width, CV_32FC1);
+    float aspect_ratio = (float)output_width / output_height;
     float fov_rad = fov * DEG_TO_RAD;
     float yaw_rad = yaw * DEG_TO_RAD;
     float pitch_rad = pitch * DEG_TO_RAD;
-    
+    float fov_factor = 1.0f / tan(fov_rad * 0.5f);
     for (int y = 0; y < output_height; y++) {
+        float* map_x_row = map_x.ptr<float>(y);
+        float* map_y_row = map_y.ptr<float>(y);
+        float screen_y = (2.0f * y / output_height) - 1.0f;
         for (int x = 0; x < output_width; x++) {
-            // Convert screen coordinates to normalized coordinates [-1, 1]
-            float screen_x = (2.0f * x / output_width) - 1.0f;
-            float screen_y = (2.0f * y / output_height) - 1.0f;
-            
-            // Apply aspect ratio correction
-            screen_x *= aspect_ratio;
-            
-            // Convert to spherical coordinates
-            float theta = atan2(screen_x, 1.0f / tan(fov_rad * 0.5f));
-            float phi = atan2(screen_y * cos(theta), 1.0f / tan(fov_rad * 0.5f));
-            
-            // Apply rotation (yaw and pitch)
-            float cos_pitch = cos(pitch_rad);
-            float sin_pitch = sin(pitch_rad);
-            float cos_yaw = cos(yaw_rad);
-            float sin_yaw = sin(yaw_rad);
-            
-            // Rotate around Y axis (yaw)
+            float screen_x = ((2.0f * x / output_width) - 1.0f) * aspect_ratio;
+            float theta = atan2(screen_x, fov_factor);
+            float phi = atan2(screen_y * cos(theta), fov_factor);
             float new_theta = theta + yaw_rad;
-            
-            // Rotate around X axis (pitch)
-            float new_phi = phi + pitch_rad;
-            
-            // Clamp phi to valid range
-            new_phi = std::max(-PI/2.0f, std::min(PI/2.0f, new_phi));
-            
-            // Convert to equirectangular coordinates
-            cv::Point2f eq_coord = sphericalToEquirectangular(new_theta, new_phi, pano.cols, pano.rows);
-            
-            // Handle wrapping for theta (horizontal)
-            while (eq_coord.x < 0) eq_coord.x += pano.cols;
-            while (eq_coord.x >= pano.cols) eq_coord.x -= pano.cols;
-            
-            // Clamp phi (vertical)
-            eq_coord.y = std::max(0.0f, std::min((float)pano.rows - 1, eq_coord.y));
-            
-            // Sample from panoramic image using bilinear interpolation
-            if (eq_coord.x >= 0 && eq_coord.x < pano.cols && 
-                eq_coord.y >= 0 && eq_coord.y < pano.rows) {
-                
-                // Bilinear interpolation for smoother results
-                int x1 = (int)floor(eq_coord.x);
-                int y1 = (int)floor(eq_coord.y);
-                int x2 = std::min(x1 + 1, pano.cols - 1);
-                int y2 = std::min(y1 + 1, pano.rows - 1);
-                
-                float fx = eq_coord.x - x1;
-                float fy = eq_coord.y - y1;
-                
-                // Handle horizontal wrapping for x coordinates
-                x1 = x1 % pano.cols;
-                x2 = x2 % pano.cols;
-                if (x1 < 0) x1 += pano.cols;
-                if (x2 < 0) x2 += pano.cols;
-                
-                // Get the four surrounding pixels
-                cv::Vec3b c00 = pano.at<cv::Vec3b>(y1, x1);
-                cv::Vec3b c10 = pano.at<cv::Vec3b>(y1, x2);
-                cv::Vec3b c01 = pano.at<cv::Vec3b>(y2, x1);
-                cv::Vec3b c11 = pano.at<cv::Vec3b>(y2, x2);
-                
-                // Interpolate
-                cv::Vec3b color;
-                for (int ch = 0; ch < 3; ch++) {
-                    float top = c00[ch] * (1 - fx) + c10[ch] * fx;
-                    float bottom = c01[ch] * (1 - fx) + c11[ch] * fx;
-                    color[ch] = (uchar)(top * (1 - fy) + bottom * fy);
-                }
-                
-                output.at<cv::Vec3b>(y, x) = color;
-            }
+            float new_phi = std::max(-PI / 2.0f, std::min(PI / 2.0f, phi + pitch_rad));
+            cv::Point2f eq_coord = sphericalToEquirectangular(new_theta, new_phi, pano_cols, pano_rows);
+            // Handle horizontal wrapping
+            while (eq_coord.x < 0) eq_coord.x += pano_cols;
+            while (eq_coord.x >= pano_cols) eq_coord.x -= pano_cols;
+            // Clamp vertical
+            eq_coord.y = std::max(0.0f, std::min((float)pano_rows - 1, eq_coord.y));
+            map_x_row[x] = eq_coord.x;
+            map_y_row[x] = eq_coord.y;
         }
     }
-    
+    // Update cache
+    cached_yaw = yaw;
+    cached_pitch = pitch;
+    cached_fov = fov;
+    cached_width = output_width;
+    cached_height = output_height;
+    cached_pano_cols = pano_cols;
+    cached_pano_rows = pano_rows;
+}
+
+cv::Mat PanoViewer::generatePerspectiveView(const cv::Mat& pano, bool needs_rebuild) {
+    // Rebuild lookup tables only if parameters changed significantly
+
+    if (needs_rebuild) {
+        buildRemapTables(pano.cols, pano.rows);
+    }
+    cv::Mat output;
+    // Use OpenCV's optimized remap function with bilinear interpolation
+    cv::remap(pano, output, map_x, map_y, cv::INTER_LINEAR, cv::BORDER_WRAP);
     return output;
 }
 
@@ -147,6 +109,7 @@ cv::Vec3f global_gaze_from_panorama(float yaw, float pitch,
                                     cv::Vec3f cam_to_person,
                                     cv::Vec3f world_up = cv::Vec3f(0.f,1.f,0.f)) {
 
+
     // Zero-gaze (yaw=0,pitch=0) means looking at the camera plane
     cv::Vec3f forward = unit(-cam_to_person);  // person -> camera
 
@@ -165,46 +128,6 @@ cv::Vec3f global_gaze_from_panorama(float yaw, float pitch,
     // Rotate local -> world
     cv::Vec3f global = right * local[0] + up * local[1] + forward * local[2];
     return unit(global);
-}
-
-cv::Point PanoViewer::rayToPanoPixel(const cv::Vec3f& p, const cv::Vec3f& d_unit,
-                       float R, int W, int H)
-{
-    cv::Point2f out = {-1, -1};
-    // Quadratic coefficients for |p + t d|^2 = R^2  with |d|=1
-    float b = p.dot(d_unit);                  // half of the b term in quadratic
-    float c = p.dot(p) - R*R;
-    float disc = b*b - c;                     // discriminant
-
-    if (disc < 0.f) return out;               // no intersection
-
-    float s = std::sqrt(std::max(0.f, disc));
-    float t1 = -b - s;                        // near intersection
-    float t2 = -b + s;                        // far intersection
-
-    // choose the farthest intersection that's forward along the ray
-    float t_hit = -std::numeric_limits<float>::infinity();
-    if (t1 >= 0.f) t_hit = t1;
-    if (t2 >= 0.f && t2 > t_hit) t_hit = t2;
-    if (!std::isfinite(t_hit) || t_hit < 0.f) return out; // no forward hit
-
-    // Intersection point
-    cv::Vec3f P = p + t_hit * d_unit;
-    // Project exactly onto sphere to avoid FP error
-    P *= (R / cv::norm(P));
-
-    // Convert to pano pixel coordinates (equirectangular 2:1)
-    float yaw   = std::atan2(P[0], P[2]);      // -π to π
-    float pitch = std::asin(P[1] / R);         // -π/2 to π/2
-
-    float u = (yaw + static_cast<float>(M_PI)) / (2.f * static_cast<float>(M_PI)) * W;
-    float v = (0.5f - pitch / static_cast<float>(M_PI)) * H;
-
-    // Wrap horizontally
-    if (u < 0.f) u += W * std::ceil(-u / W);
-    if (u >= W)  u -= W * std::floor(u / W);
-
-    return cv::Point(u, v);
 }
 
 std::pair<float, float> PanoViewer::apply_head_offset_correction(float yaw, float pitch, float fov, cv::Vec3f head_offset) {
@@ -233,16 +156,35 @@ PanoViewer::gaze PanoViewer::addGaze(int personID, float cam_yaw, float cam_pitc
     gaze new_gaze;
     new_gaze.personID = personID;
 
+
+    float cy = std::cos(cam_yaw*DEG_TO_RAD);
+    float sy = std::sin(cam_yaw * DEG_TO_RAD);
+    float cp = std::cos(cam_pitch*DEG_TO_RAD);
+    float sp = std::sin(cam_pitch * DEG_TO_RAD);
+
+    float x = position[0];
+    float y = position[1];
+    float z = position[2];
+
+    float v1x = x;
+    float v1y = cp * y - sp * z;
+    float v1z = sp * y + cp * z;
+
+    cv::Vec3f worldPos;
+    worldPos[0] = cy * v1x + sy * v1z;   // X_world
+    worldPos[1] = v1y;                   // Y_world (unchanged by yaw)
+    worldPos[2] = -sy * v1x + cy * v1z;   // Z_world
+
     //get initial virtual camera ray
 	cv::Vec3f start_direction = dir_from_yaw_pitch(cam_yaw * DEG_TO_RAD, cam_pitch * DEG_TO_RAD);
-    //adjust ray with person offset
-	std::pair<float, float> person_position = apply_head_offset_correction(cam_yaw * DEG_TO_RAD, cam_pitch * DEG_TO_RAD, cam_fov * DEG_TO_RAD, position);
-	cv::Vec3f person_direction = dir_from_yaw_pitch(person_position.first * DEG_TO_RAD, person_position.second * DEG_TO_RAD);
+
+
+
     new_gaze.direction = global_gaze_from_panorama(yaw * DEG_TO_RAD, pitch * DEG_TO_RAD, start_direction);
 
-    start_direction *= position[2]; //scale by distance to person
-	person_direction = compute_scaled_person_vector(start_direction, person_direction);
-    new_gaze.start = cv::Point3f(person_direction[0], person_direction[1], person_direction[2]);
+
+
+    new_gaze.start = cv::Point3f(worldPos[0], worldPos[1], worldPos[2]);
     return new_gaze;
 }
 
@@ -261,66 +203,46 @@ void PanoViewer::setFOV(float new_fov) {
 float PanoViewer::getFOV() {
     return fov;
 }
+float PanoViewer::getYaw() {
+    return yaw;
+}
+float PanoViewer::getPitch() {
+    return pitch;
+}
 
 
 
-//inline cv::Point2d pano_to_spherical(const cv::Point& pixel) {
-//    // Normalize [0, W] → [0, 1], then scale to [-π, π]
-//    double lon = (static_cast<double>(pixel.x) /PanoViewer::getGlobalWidth()) * 2.0 * M_PI - 1.0 * M_PI;
-//
-//    // Normalize [0, H] → [0, 1], then scale to [-π/2, π/2]
-//    double lat = (0.5 -static_cast<double>(pixel.y) / PanoViewer::getGlobalHeight())* M_PI;
-//
-//    return {lon, lat};  // (longitude, latitude)
-//}
+bool PanoViewer::isLookingAt(PanoViewer::gaze gaze, cv::Point3f facePos, float maxAngleDeg)
+{
+    cv::Vec3f v = facePos - gaze.start;
+    float dist = std::sqrt(v.dot(v));
+
+    cv::Vec3f vdir = v / dist;  // normalize
+    float cosTheta = vdir.dot(gaze.direction);
+
+    float maxAngleRad = maxAngleDeg * static_cast<float>(M_PI / 180.0);
+    float cosMax = std::cos(maxAngleRad);
+
+    return cosTheta >= cosMax;
+}
+
+void PanoViewer::gaze_analysis(std::vector<gaze>& gazes) {
+    for (size_t i = 0; i < gazes.size(); ++i) {
+        for (size_t j = 0; j < gazes.size(); ++j) {
+            if (i == j) continue; // don't compare to self
+
+            const auto& gi = gazes[i];
+            const auto& gj = gazes[j];
 
 
-
-
-
-
-// Returns -1 if gaze not intersecting any bounding box
-//int PanoViewer::bbox_intersections(const cv::Point& gaze_pt, const cv::Point& start_pt,
-//                                   const std::vector<Sort::Track>& bounding_boxes)
-//{
-//    // Convert gaze point to spherical coordinates
-//    cv::Point2d gaze_sph = pano_to_spherical(gaze_pt);
-//
-//    
-//    double scale = 1.2; // scale bounding box by 20%
-//    for (const Sort::Track& t : bounding_boxes) {
-//        // Skip self. -1 since track ids start at 1
-//        if (cv::Point(t.box.x, t.box.y) == start_pt){
-//            continue;
-//        }
-//        cv::Rect bbox = t.box;
-//        // Compute scaled bounding box
-//        cv::Point center(bbox.x + bbox.width/2, bbox.y + bbox.height/2);
-//        int scaled_w = static_cast<int>(bbox.width * scale);
-//        int scaled_h = static_cast<int>(bbox.height * scale);
-//        cv::Point top_left(center.x - scaled_w/2, center.y - scaled_h/2);
-//        cv::Point bot_right(center.x + scaled_w/2, center.y + scaled_h/2);
-//
-//        // Convert corners to spherical coordinates
-//        cv::Point2d top_left_sph  = pano_to_spherical(top_left);
-//        cv::Point2d bot_right_sph = pano_to_spherical(bot_right);
-//
-//        double min_lon = std::min(top_left_sph.x, bot_right_sph.x);
-//        double max_lon = std::max(top_left_sph.x, bot_right_sph.x);
-//        double min_lat = std::min(top_left_sph.y, bot_right_sph.y);
-//        double max_lat = std::max(top_left_sph.y, bot_right_sph.y);
-//
-//        // Check if gaze lies inside spherical box
-//        if (gaze_sph.x >= min_lon && gaze_sph.x <= max_lon && 
-//            gaze_sph.y >= min_lat && gaze_sph.y <= max_lat) {
-//            return t.id-1;
-//        }
-//    }
-//
-//    return -1;
-//}
-
-
+            if (isLookingAt(gi, gj.start, 20)) {
+                std::cout << "Person " << gi.personID
+                    << " is looking at person " << gj.personID
+                    << std::endl;
+            }
+        }
+    }
+}
 
 PanoViewer::gaze_window& PanoViewer::add_frame_to_window(PanoViewer::gaze_window& gaze_win, int person_id, int intersect)
 {

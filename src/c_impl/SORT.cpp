@@ -17,7 +17,7 @@ double Sort::getIOU(const cv::Rect2f& bb_test, const cv::Rect2f& bb_gt) {
     return static_cast<double>(in / un);
 }
 
-std::vector<Sort::Track> Sort::update(const std::vector<cv::Rect>& detections, int rows, int cols, PanoViewer& viewer) {
+std::vector<Sort::Track> Sort::update(const std::vector<cv::Rect>& detections, int rows, int cols) {
 
     // Early exit if no trackers and no detections
     if (trackers_.empty() && detections.empty()) {
@@ -152,24 +152,25 @@ std::vector<Sort::Track> Sort::update(const std::vector<cv::Rect>& detections, i
         // 2) compute phi (latitude) of the bbox TOP pixel in panorama
         double top_v = static_cast<double>(person.y); // top row of bbox in pano pixels
         double phi_top = (0.5 - (top_v / (double)rows)) * M_PI; // radians
-
+        PanoViewer* viewer = new PanoViewer();
         // 3) compute desired vertical FOV (deg) — reuse your helper (already clamps)
-        int h_star = static_cast<int>(viewer.getOutputHeight() * 0.1f); // e.g., head ~20% of input height
-        float theta_deg = viewer.computeFOVForPersonBox(person, rows, h_star);
+        int h_star = static_cast<int>(viewer->getOutputHeight() * 0.13f); // e.g., head ~20% of input height
+        float theta_deg = viewer->computeFOVForPersonBox(person, rows, h_star);
         double theta_rad = theta_deg * M_PI / 180.0;
 
         // 4) set pitch so that the top row (y=0) of perspective maps to phi_top:
         //    at center column, phi_at_top_row = -theta/2  => pitch = phi_top - phi_at_top_row = phi_top + theta/2
         double pitch_rad = phi_top - 0.3 * theta_rad;
         float pitch_deg = static_cast<float>(pitch_rad * 180.0 / M_PI);
-
-		track.yaw = yaw_deg;
-		track.pitch = -pitch_deg;
-		track.fov = theta_deg;
+		track.viewer = viewer;
+		track.viewer->setYaw(yaw_deg);
+		track.viewer->setPitch(-pitch_deg);
+		track.viewer->setFOV(theta_deg);
     }
 
     return result;
 }
+
 
 
 

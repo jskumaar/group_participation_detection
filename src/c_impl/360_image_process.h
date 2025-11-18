@@ -3,8 +3,8 @@
 #include <opencv2/opencv.hpp>
 #include <iostream>
 #include <cmath>
-#include<deque>
-#include "SORT.h"
+#include <deque>
+#include <vector>
 
 class PanoViewer{
     public:
@@ -27,11 +27,13 @@ class PanoViewer{
 
         PanoViewer();
         ~PanoViewer();
-        cv::Mat generatePerspectiveView(const cv::Mat& pano);
+        cv::Mat generatePerspectiveView(const cv::Mat& pano, bool needs_rebuild);
         void setYaw(float new_yaw);
         void setPitch(float new_pitch);
         void setFOV(float new_fov);
         float getFOV();
+		float getYaw();
+		float getPitch();
 
         // New accessors for output dimensions
         int getOutputWidth() const { return output_width; }
@@ -46,14 +48,13 @@ class PanoViewer{
         gaze addGaze(int personID, float cam_yaw, float cam_pitch, float cam_fov, float pose_yaw, float pose_pitch, cv::Vec3f position);
         cv::Point rayToPanoPixel(const cv::Vec3f& p, const cv::Vec3f& d_unit,
                        float R, int W, int H);
-        static int bbox_intersections(const cv::Point& gaze_pt, const cv::Point& start_pt,
-                                   const std::vector<Sort::Track>& bounding_boxes);
+        // Note: removed declaration referencing Sort::Track to avoid circular dependency with SORT.h
         static gaze_window& add_frame_to_window(PanoViewer::gaze_window& gaze_win, int person_id, int intersect);
         static void print_gaze_window(PanoViewer::gaze_window& gaze_win, cv::Mat frame, cv::Rect bbox);
+
+		void gaze_analysis(std::vector<gaze>& gazes);
         
     private:
-
-        std::vector<gaze> gazes;
         //functions
         std::pair<float, float> apply_head_offset_correction(float yaw, float pitch, float fov, cv::Vec3f head_offset);
         cv::Point2f sphericalToEquirectangular(float theta, float phi, int pano_width, int pano_height);
@@ -73,5 +74,17 @@ class PanoViewer{
         const float PI = 3.14159265359f;
         const float DEG_TO_RAD = PI / 180.0f;
 		const float RAD_TO_DEG = 180.0f / PI;
+
+
+        cv::Mat map_x, map_y;
+        float cached_yaw = -999.0f;
+        float cached_pitch = -999.0f;
+        float cached_fov = -999.0f;
+        int cached_width = -1;
+        int cached_height = -1;
+        int cached_pano_cols = -1;
+        int cached_pano_rows = -1;
+        void buildRemapTables(int pano_cols, int pano_rows);
+        bool isLookingAt(PanoViewer::gaze gaze, cv::Point3f facePos, float maxAngleDeg);
 
 };

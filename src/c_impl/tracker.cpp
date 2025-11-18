@@ -177,10 +177,10 @@ RawPose OPNetTracker::transform_to_world_pose(const cv::Quatf &face_rotation, co
     // So we need an extra offset. Which we determine by computing
     // z,y,z-pos = head_joint_loc + R_face * offset
     const cv::Vec3f local_offset = cv::Vec3f{-100, 0, 0};
-    const cv::Vec3f offset = rotate(rot, local_offset);
-    const cv::Vec3f pos = face_world_pos + offset;
+    //const cv::Vec3f offset = rotate(rot, local_offset);
+    //const cv::Vec3f pos = face_world_pos + offset;
 
-    return { rot, pos };
+    return { rot, face_world_pos };
 }
 
 

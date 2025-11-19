@@ -3,12 +3,12 @@ project(tracker)
 
 set(CMAKE_CXX_STANDARD 17)
 
-# SDK Includes
+# ONNX Runtime - use the correct include path
 include_directories(
   ${CMAKE_SOURCE_DIR}/onnx/include
 )
 
-# SDK Libs
+
 link_directories(
   ${CMAKE_SOURCE_DIR}/onnx/lib
 )
@@ -18,29 +18,23 @@ set(OpenCV_DIR "C:/opencv/build")
 find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS})
 
-set(SORT_SOURCES 
-${CMAKE_SOURCE_DIR}/sort-cpp/sort-c++/KalmanTracker.cpp
-${CMAKE_SOURCE_DIR}/sort-cpp/sort-c++/Hungarian.cpp
-)
-
+# Sources
 set(SOURCES
-  model_core.cpp
-  tracker.cpp
-  360_image_process.cpp
-  SORT.cpp
-  main.cpp
-#   model_test.cpp
+    model_core.cpp
+    tracker.cpp
+    SORT.cpp
+    360_image_process.cpp
+    #model_test.cpp
+    main.cpp
+    ${CMAKE_SOURCE_DIR}/sort-cpp/sort-c++/KalmanTracker.cpp
+    ${CMAKE_SOURCE_DIR}/sort-cpp/sort-c++/Hungarian.cpp
 )
-
-
 
 # Executable
-add_executable(${PROJECT_NAME} ${SOURCES} ${SORT_SOURCES})
-# add_executable(${PROJECT_NAME} ${SOURCES})
+add_executable(${PROJECT_NAME} ${SOURCES})
 
-# Link libraries
+# Include directories - add the onnxruntime subdirectory
 target_link_libraries(${PROJECT_NAME}
   ${OpenCV_LIBS}
   onnxruntime
-  ${CMAKE_SOURCE_DIR}/sort-cpp/sort-c++
 )

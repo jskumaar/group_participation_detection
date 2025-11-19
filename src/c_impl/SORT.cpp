@@ -1,6 +1,9 @@
 #include "SORT.h"
 #include <set>
 #include <limits>
+#include "360_image_process.h"
+
+#define M_PI 3.14159265358979323846
 
 Sort::Sort(int max_age, int min_hits, double iou_threshold)
     : frame_count_(0), max_age_(max_age), min_hits_(min_hits), iou_threshold_(iou_threshold) {
@@ -14,7 +17,7 @@ double Sort::getIOU(const cv::Rect2f& bb_test, const cv::Rect2f& bb_gt) {
     return static_cast<double>(in / un);
 }
 
-std::vector<Sort::Track> Sort::update(const std::vector<cv::Rect>& detections) {
+std::vector<Sort::Track> Sort::update(const std::vector<cv::Rect>& detections, int rows, int cols, PanoViewer& viewer) {
 
     // Early exit if no trackers and no detections
     if (trackers_.empty() && detections.empty()) {
@@ -136,6 +139,33 @@ std::vector<Sort::Track> Sort::update(const std::vector<cv::Rect>& detections) {
         } else {
             ++it;
         }
+    }
+
+	//8. find virtual cam parameters for each track
+    for (Track& track : result) {
+        cv::Rect person = track.box;
+        // 1) compute yaw from bbox center x (panorama -> longitude)
+        float center_x = person.x + person.width * 0.5f;
+        double lambda = (center_x / (double)cols) * 2.0 * M_PI - M_PI;
+        float yaw_deg = static_cast<float>(lambda * 180.0 / M_PI);
+
+        // 2) compute phi (latitude) of the bbox TOP pixel in panorama
+        double top_v = static_cast<double>(person.y); // top row of bbox in pano pixels
+        double phi_top = (0.5 - (top_v / (double)rows)) * M_PI; // radians
+
+        // 3) compute desired vertical FOV (deg) — reuse your helper (already clamps)
+        int h_star = static_cast<int>(viewer.getOutputHeight() * 0.1f); // e.g., head ~20% of input height
+        float theta_deg = viewer.computeFOVForPersonBox(person, rows, h_star);
+        double theta_rad = theta_deg * M_PI / 180.0;
+
+        // 4) set pitch so that the top row (y=0) of perspective maps to phi_top:
+        //    at center column, phi_at_top_row = -theta/2  => pitch = phi_top - phi_at_top_row = phi_top + theta/2
+        double pitch_rad = phi_top - 0.3 * theta_rad;
+        float pitch_deg = static_cast<float>(pitch_rad * 180.0 / M_PI);
+
+		track.yaw = yaw_deg;
+		track.pitch = -pitch_deg;
+		track.fov = theta_deg;
     }
 
     return result;

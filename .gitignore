@@ -1,10 +1,10 @@
-codes/insta360/sdk/*
-!codes/insta360/sdk/.gitkeep
-codes/insta360/build/*
+test_codes/insta360/sdk/*
+!test_codes/insta360/sdk/.gitkeep
+test_codes/insta360/build/*
 src/c_impl/models/
 src/c_impl/build/
 src/c_impl/onnx/
 src/python/detections_out/*
 src/python/live_out/*
-src/calib_data/*
+src/calibration/*
 datasets/*

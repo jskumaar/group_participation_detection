@@ -1,9 +1,8 @@
 #include "360_image_process.h"
 #include "SORT.h"
 
-
-#define num_people 3;
 #define M_PI 3.14159265358979323846
+
 
 PanoViewer::PanoViewer() {
     // Try to open camera input 1 (change to 0 if needed)
@@ -142,16 +141,6 @@ std::pair<float, float> PanoViewer::apply_head_offset_correction(float yaw, floa
 	return { (yaw + theta) * RAD_TO_DEG, (pitch + phi) * RAD_TO_DEG };
 }
 
-cv::Vec3f compute_scaled_person_vector(cv::Vec3f scaled_cam, cv::Vec3f person_vector) {
-    float dot_pu = scaled_cam.dot(person_vector);
-    float dot_pp = scaled_cam.dot(scaled_cam);
-
-
-    float t = dot_pp / dot_pu;   // scale for u
-    cv::Vec3f x = person_vector * t;         // intersection point
-    return x;
-}
-
 PanoViewer::gaze PanoViewer::addGaze(int personID, float cam_yaw, float cam_pitch, float cam_fov, float yaw, float pitch, cv::Vec3f position) {
     gaze new_gaze;
     new_gaze.personID = personID;
@@ -244,66 +233,6 @@ void PanoViewer::gaze_analysis(std::vector<gaze>& gazes) {
     }
 }
 
-PanoViewer::gaze_window& PanoViewer::add_frame_to_window(PanoViewer::gaze_window& gaze_win, int person_id, int intersect)
-{
-    if (gaze_win.sights.size() == gaze_win.max_window_length){
-        int first_value = gaze_win.sights[0];
-        gaze_win.sights.pop_front();
-        if (first_value ==-1){
-            gaze_win.counts[person_id]--;
-        }
-        else{
-            gaze_win.counts[first_value] --;
-        }
-    } // only decrement counts and remove first val if size of sights has reached max size 
-
-    gaze_win.sights.push_back(intersect);
-    if (intersect==-1){ // not looking at andybody, add to count index of person_id to keep track 
-        gaze_win.counts[person_id] ++;
-    }
-
-    else{
-        gaze_win.counts[intersect]++;
-    }
-
-    return gaze_win;
-}
-
-void PanoViewer::print_gaze_window(PanoViewer::gaze_window& gaze_win, cv::Mat frame, cv::Rect bbox)
-{
-    if (gaze_win.sights.size() < gaze_win.max_window_length)
-    {
-        cv::putText(frame, "not enought data",  cv::Point(bbox.x-100, bbox.y-300), cv::FONT_HERSHEY_SIMPLEX,  2.0, cv::Scalar (255, 255, 255), 2);
-        return;
-    }
-
-    int y_offset = 400;
-
-    cv::putText(frame, "Over last  " + std::to_string(gaze_win.max_window_length) + " frames: ",  
-                cv::Point(bbox.x, bbox.y-y_offset), cv::FONT_HERSHEY_SIMPLEX,  0.8, cv::Scalar (0, 0, 0), 2);
-
-
-
-    y_offset-=100;
-    for(int i = 0; i<gaze_win.counts.size(); i++){
-        if (i== gaze_win.personID)
-        {
-            double pct_elsewhere = 100.0 * (double)(gaze_win.counts[gaze_win.personID]) / (double)(gaze_win.max_window_length);
-            cv::putText(frame, "% looking elswhere: " + std::to_string(pct_elsewhere),  
-                        cv::Point(bbox.x, bbox.y-y_offset), cv::FONT_HERSHEY_SIMPLEX,  0.8, cv::Scalar (0, 0, 0), 2);
-        } 
-        else
-        {
-            double pct = 100.0 * (double)(gaze_win.counts[i]) / (double)(gaze_win.max_window_length);
-            cv::putText(frame, "%looking at person " + std::to_string(i) + " : " + std::to_string(pct), 
-                        cv::Point(bbox.x, bbox.y-y_offset), cv::FONT_HERSHEY_SIMPLEX,  0.8, cv::Scalar (0, 0, 0), 2);
-        }
-        y_offset-=100;
-    }
-
-}
-
-// New helper: compute FOV so head maps to h_star_pixels in output
 float PanoViewer::computeFOVForPersonBox(const cv::Rect& box, int pano_height, int h_star_pixels, float r_head, float deg_min, float deg_max) const {
     // Person angular height (radians) ~ (h / H) * pi
     const double person_h = static_cast<double>(box.height);

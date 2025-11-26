@@ -1,3 +1,11 @@
+/**
+ * @file main.cpp
+ * @brief Main application for 360-degree panoramic video gaze tracking
+ *
+ * This application processes 360-degree panoramic videos to track people and their gazes,
+ * determining when individuals are looking at each other.
+ */
+
 #include "360_image_process.h"
 #include "tracker.h"
 
@@ -74,15 +82,11 @@ float eyeBoost(float yaw_deg) {
     return 1.0f + extra;
 }
 
+// Configuration
+const char* VIDEO_PATH = "demo_1_stitched.mp4";
 
 int main() {
-
-    // change based on where ur vid is located
-    // Atindrah's video path
-    // char* vid_path = "/Users/atind/Downloads/demo_1_stitched.mp4";
-    // NAVEEN'S video path
-    char* vid_path = "demo_1_stitched.mp4";
-    cv::VideoCapture cap(vid_path);
+    cv::VideoCapture cap(VIDEO_PATH);
     if (!cap.isOpened()) {
         std::cerr << "Error: Cannot open camera input 1. Trying input 0..." << std::endl;
     }
@@ -90,28 +94,18 @@ int main() {
 
     cap.set(cv::CAP_PROP_FRAME_WIDTH, GLOBAL_FRAME_WIDTH);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, GLOBAL_FRAME_HEIGHT);
-    //cap.set(cv::CAP_PROP_POS_FRAMES, 100);
     cap.set(cv::CAP_PROP_POS_FRAMES, 6780);
 
     cv::Mat pano_frame;
 
-    //cv::namedWindow("360° Viewer", cv::WINDOW_NORMAL);  // Changed from WINDOW_AUTOSIZE
-    //cv::resizeWindow("360° Viewer", 640, 480);
-    //cv::namedWindow("crop Viewer1", cv::WINDOW_NORMAL);  // Changed from WINDOW_AUTOSIZE
-    //cv::resizeWindow("crop Viewer1", 640, 480);
-    //cv::namedWindow("crop Viewer2", cv::WINDOW_NORMAL);  // Changed from WINDOW_AUTOSIZE
-    //cv::resizeWindow("crop Viewer2", 640, 480);
-    //cv::namedWindow("crop Viewer3", cv::WINDOW_NORMAL);  // Changed from WINDOW_AUTOSIZE
-    //cv::resizeWindow("crop Viewer3", 640, 480);
-    //cv::namedWindow("Perspective View", cv::WINDOW_NORMAL);  // Changed from WINDOW_AUTOSIZE
-    //cv::resizeWindow("Perspective View", 640, 480);
-
-
-
-    // MAC
-    // FILE* gp = popen("gnuplot -persistent", "w");
-    // USE ONE BELOW FOR WINDOWS 
+#ifdef _WIN32 
     FILE* gp = _popen("gnuplot -persistent", "w");
+#else
+    FILE* gp = popen("gnuplot -persistent", "w");
+#endif
+
+//    cv::namedWindow("360° Viewer", cv::WINDOW_NORMAL);  // Changed from WINDOW_AUTOSIZE
+//cv::resizeWindow("360° Viewer", 640, 480);
 
     if (!gp) { std::cerr << "Failed to start gnuplot\n"; return 1; }
 
@@ -129,6 +123,7 @@ int main() {
     fprintf(gp, "set zlabel 'Z (Forward)'\n");
 
     std::vector<PanoViewer::gaze> gazes;
+    gazes.reserve(20); // Pre-allocate for typical number of people
     std::vector<cv::Rect> people;
     cv::Mat perspective_view;
 
@@ -137,6 +132,14 @@ int main() {
     auto fps_last_time = clock_t::now();
     int fps_frame_count = 0;
     double fps = 0.0;
+
+    // Cache commonly used values
+    const cv::Scalar green_color(0, 255, 0);
+    const cv::Scalar black_color(0, 0, 0);
+    constexpr double font_scale = 1.0;
+    constexpr int thickness = 2;
+    std::string id_text;
+    id_text.reserve(20); // Pre-allocate string buffer
 
     // array of gaze_windows based on index per person
 
@@ -174,14 +177,14 @@ int main() {
             printf("YOLO Running: \t");
             people = tracker.run_yolo(pano_frame);
             tracks = object_tracker.update(people, pano_frame.rows, pano_frame.cols);
-            localizer_confidence = 1;
+            localizer_confidence = 1.0f;
 			yolo_update = true;
         }
 
         // Generate perspective view
-         // Counter for unique window names
-        //cv::Scalar color;
-        for (const Sort::Track& track : tracks) {
+        const size_t num_tracks = tracks.size();
+        for (size_t i = 0; i < num_tracks; ++i) {
+            const Sort::Track& track = tracks[i];
 
             // Draw bbox and ID on panorama
             cv::Rect bbox = track.box; // convert Rect2f -> Rect (truncates)
@@ -190,17 +193,22 @@ int main() {
             bbox.y = std::max(0, bbox.y);
             bbox.width = std::min(bbox.width, pano_frame.cols - bbox.x);
             bbox.height = std::min(bbox.height, pano_frame.rows - bbox.y);
-            cv::Scalar col(0, 255, 0);
-            cv::rectangle(pano_frame, bbox, col, 2);
-            std::string id_text = "ID: " + std::to_string(track.id);
+            cv::rectangle(pano_frame, bbox, green_color, 2);
+            
+            // Reuse pre-allocated string buffer
+            id_text = "ID: ";
+            id_text += std::to_string(track.id);
+            
             int baseline = 0;
-            double font_scale = 1.0;
-            int thickness = 2;
             cv::Size text_size = cv::getTextSize(id_text, cv::FONT_HERSHEY_SIMPLEX, font_scale, thickness, &baseline);
-            cv::Point text_pt(bbox.x, std::max(20, bbox.y - 10));
+            const cv::Point text_pt(bbox.x, std::max(20, bbox.y - 10));
+            
             // draw filled rectangle behind text for readability
-            cv::rectangle(pano_frame, cv::Point(text_pt.x, text_pt.y - text_size.height - 4), cv::Point(text_pt.x + text_size.width, text_pt.y + 4), cv::Scalar(0,0,0), cv::FILLED);
-            cv::putText(pano_frame, id_text, text_pt, cv::FONT_HERSHEY_SIMPLEX, font_scale, col, thickness);
+            cv::rectangle(pano_frame, 
+                         cv::Point(text_pt.x, text_pt.y - text_size.height - 4), 
+                         cv::Point(text_pt.x + text_size.width, text_pt.y + 4), 
+                         black_color, cv::FILLED);
+            cv::putText(pano_frame, id_text, text_pt, cv::FONT_HERSHEY_SIMPLEX, font_scale, green_color, thickness);
 
             perspective_view = track.viewer->generatePerspectiveView(pano_frame, yolo_update);
             Pose pose = tracker.run(perspective_view, static_cast<int>(track.viewer->getFOV()));
@@ -208,44 +216,30 @@ int main() {
                 localizer_confidence = pose.confidence;
                 continue;
             }
-            //printf("personID: %d, yaw: %f, pitch: %f, roll: %f, x: %f, y: %f, z: %f\n", track.id, pose.yaw, pose.pitch, pose.roll, pose.x, pose.y, pose.z);
-            PanoViewer::gaze gaze = track.viewer->addGaze(track.id, track.viewer->getYaw(), -track.viewer->getPitch(), track.viewer->getFOV(), pose.yaw * eyeBoost(pose.yaw), pose.pitch, cv::Vec3f(pose.x, pose.y, pose.z));
-            gazes.push_back(gaze);
-        //    //auto pano_pixel = viewer.rayToPanoPixel(cv::Vec3f(gaze.start.x, gaze.start.y, gaze.start.z),
-        //    //    gaze.direction,
-        //    //    pose.z,
-        //    //    GLOBAL_FRAME_WIDTH,
-        //    //    GLOBAL_FRAME_HEIGHT);
-
-        //    //printf("Pano Pixel: x=%d, y=%d\n", pano_pixel.x, pano_pixel.y);
-
-
-        ////    int intersect = PanoViewer::bbox_intersections(cv::Point(pano_pixel.x, pano_pixel.y), cv::Point(person.x, person.y), tracks);
-        ////    cv::circle(pano_frame, pano_pixel, 40, color, 2);
-        ////    std::string text = "Person: " + std::to_string(person_id) + " looking at person: " + std::to_string(intersect);
-        ////    cv::putText(pano_frame, text, cv::Point(person.x, person.y), cv::FONT_HERSHEY_SIMPLEX, 1.0, color, 2);
-
-
-        ////    cv::rectangle(pano_frame, person, cv::Scalar(0, 255, 0), 2);  // Green rectangle, 2px thick
-
-        ////    // NOT NEEDED FOR TESTING PURPOSES 
-        ////    // PanoViewer::add_frame_to_window(gaze_windows[person_id], person_id, intersect);
-        ////    // PanoViewer::print_gaze_window(gaze_windows[person_id], pano_frame, scaled);
+            
+            const float yaw_boost = eyeBoost(pose.yaw);
+            gazes.emplace_back(track.viewer->addGaze(track.id, 
+                                                      track.viewer->getYaw(), 
+                                                      -track.viewer->getPitch(), 
+                                                      track.viewer->getFOV(), 
+                                                      pose.yaw * yaw_boost, 
+                                                      pose.pitch, 
+                                                      cv::Vec3f(pose.x, pose.y, pose.z)));
             perspective_view.release();
         }
 		pano_viewer.gaze_analysis(gazes);
         //visualize(gp, 10, gazes);
         gazes.clear();
         //imshow("360° Viewer", pano_frame);
-        //pano_frame.release();
         //char key = cv::waitKey(100) & 0xFF;
         //if (key == 27) break; // ESC to exit
     }
 
-    // MAC
-    // pclose(gp);
-    // USE ONE BELOW FOR WINDOWS
+#ifdef _WIN32
     _pclose(gp);
+#else
+    pclose(gp);
+#endif
     cap.release();
     cv::destroyAllWindows();
     return 0;

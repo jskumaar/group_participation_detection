@@ -153,7 +153,7 @@ std::vector<Sort::Track> Sort::update(const std::vector<cv::Rect>& detections, i
         double top_v = static_cast<double>(person.y); // top row of bbox in pano pixels
         double phi_top = (0.5 - (top_v / (double)rows)) * M_PI; // radians
         PanoViewer* viewer = new PanoViewer();
-        // 3) compute desired vertical FOV (deg) — reuse your helper (already clamps)
+        // 3) compute desired vertical FOV (deg) ï¿½ reuse your helper (already clamps)
         int h_star = static_cast<int>(viewer->getOutputHeight() * 0.13f); // e.g., head ~20% of input height
         float theta_deg = viewer->computeFOVForPersonBox(person, rows, h_star);
         double theta_rad = theta_deg * M_PI / 180.0;
@@ -167,6 +167,8 @@ std::vector<Sort::Track> Sort::update(const std::vector<cv::Rect>& detections, i
 		track.viewer->setPitch(-pitch_deg);
 		track.viewer->setFOV(theta_deg);
     }
+
+    
 
     return result;
 }

@@ -1,3 +1,11 @@
+/**
+ * @file 360_image_process.h
+ * @brief Header for panoramic image processing and gaze tracking
+ *
+ * Defines the PanoViewer class for processing 360-degree equirectangular images,
+ * generating perspective views, and computing gaze vectors for person tracking.
+ */
+
 #pragma once
 
 #include <opencv2/opencv.hpp>
@@ -46,11 +54,6 @@ class PanoViewer{
 
         //calc functions
         gaze addGaze(int personID, float cam_yaw, float cam_pitch, float cam_fov, float pose_yaw, float pose_pitch, cv::Vec3f position);
-        cv::Point rayToPanoPixel(const cv::Vec3f& p, const cv::Vec3f& d_unit,
-                       float R, int W, int H);
-        // Note: removed declaration referencing Sort::Track to avoid circular dependency with SORT.h
-        static gaze_window& add_frame_to_window(PanoViewer::gaze_window& gaze_win, int person_id, int intersect);
-        static void print_gaze_window(PanoViewer::gaze_window& gaze_win, cv::Mat frame, cv::Rect bbox);
 
 		void gaze_analysis(std::vector<gaze>& gazes);
         
@@ -65,9 +68,9 @@ class PanoViewer{
         float pitch;      // Vertical rotation (up/down)
         float fov;       // Field of view (zoom level)
 
-        // Output dimensions (16:9 aspect ratio)
-        const int output_width = 1280;
-        const int output_height = 720;
+        // Output dimensions 
+        const int output_width = 640;
+        const int output_height = 480;
         float aspect_ratio = (float)output_width / output_height;
 
         // Conversion constants

@@ -1,11 +1,15 @@
-// if using mac, convert wstrings to strings. opposite if windows
-
+/**
+ * @file tracker.cpp
+ * @brief OPNet tracker implementation for head pose estimation and person detection
+ *
+ * Platform-specific code is handled via preprocessor directives.
+ */
 
 #include "tracker.h"
 
-
-// NEED FOR WINDOWS
+#ifdef _WIN32
 #define M_PI 3.14159265358979323846
+#endif
 
 namespace fs = std::filesystem;
 
@@ -25,21 +29,24 @@ bool OPNetTracker::initialize() {
         session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         allocator_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
         fs::path exe_dir = fs::current_path().parent_path().parent_path().parent_path();
-        //MAC
-        // std::string model_path = (exe_dir / L"models" / L"head-localizer.onnx").string();
-        //WINDOWS 
+        
+#ifdef _WIN32
+        // Windows uses wstring for filesystem paths
         std::wstring model_path = (exe_dir / L"models" / L"head-localizer.onnx").wstring();
         localizer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
-        //MAC
-        // model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").string();
-        //WINDOWS
         model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").wstring();
         poseestimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
-        //MAC
-        // model_path = (exe_dir / L"models" / L"yolo11n.onnx").string();
-        //WINDOWS
         model_path = (exe_dir / L"models" / L"yolo11n.onnx").wstring();
         reframer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options), CONFIDENCE_THRESHOLD, NMS_THRESHOLD);
+#else
+        // macOS/Linux uses string for filesystem paths
+        std::string model_path = (exe_dir / "models" / "head-localizer.onnx").string();
+        localizer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
+        model_path = (exe_dir / "models" / "head-pose-0.3-big-quantized.onnx").string();
+        poseestimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
+        model_path = (exe_dir / "models" / "yolo11n.onnx").string();
+        reframer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options), CONFIDENCE_THRESHOLD, NMS_THRESHOLD);
+#endif
     }
     catch (const Ort::Exception &e)
     {
@@ -185,6 +192,8 @@ RawPose OPNetTracker::transform_to_world_pose(const cv::Quatf &face_rotation, co
 
 
 void OPNetTracker::prepare_input_image(cv::Mat &img){
+    printf("Image size: %d x %d\n", img.cols, img.rows);
+	//640 x 480 is 4:3 aspect ratio
     if (img.rows*4 != img.cols*3)
     {
         img = img(make_crop_rect_for_aspect(img.size(), 4, 3));

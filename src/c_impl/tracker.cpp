@@ -192,7 +192,6 @@ RawPose OPNetTracker::transform_to_world_pose(const cv::Quatf &face_rotation, co
 
 
 void OPNetTracker::prepare_input_image(cv::Mat &img){
-    printf("Image size: %d x %d\n", img.cols, img.rows);
 	//640 x 480 is 4:3 aspect ratio
     if (img.rows*4 != img.cols*3)
     {

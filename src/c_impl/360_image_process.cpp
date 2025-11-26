@@ -141,9 +141,8 @@ std::pair<float, float> PanoViewer::apply_head_offset_correction(float yaw, floa
 	return { (yaw + theta) * RAD_TO_DEG, (pitch + phi) * RAD_TO_DEG };
 }
 
-PanoViewer::gaze PanoViewer::addGaze(int personID, float cam_yaw, float cam_pitch, float cam_fov, float yaw, float pitch, cv::Vec3f position) {
+PanoViewer::gaze PanoViewer::addGaze(float cam_yaw, float cam_pitch, float cam_fov, float yaw, float pitch, cv::Vec3f position) {
     gaze new_gaze;
-    new_gaze.personID = personID;
 
 
     float cy = std::cos(cam_yaw*DEG_TO_RAD);
@@ -256,4 +255,26 @@ float PanoViewer::computeFOVForPersonBox(const cv::Rect& box, int pano_height, i
     double theta = 2.0 * std::atan(tan_half_theta);
     float theta_deg = static_cast<float>(theta * 180.0 / M_PI);
     return theta_deg;
+}
+
+void PanoViewer::saveGazeAnalysis(std::ofstream& csv_file, long frame_number, const std::vector<gaze>& gazes) {
+    if (!csv_file.is_open()) return;
+
+    for (const auto& g : gazes) {
+        std::string looking_at_ids = "";
+        for (const auto& other : gazes) {
+            if (g.personID == other.personID) continue;
+            if (isLookingAt(g, other.start, 20)) {
+                if (!looking_at_ids.empty()) looking_at_ids += ";";
+                looking_at_ids += std::to_string(other.personID);
+            }
+        }
+
+        csv_file << frame_number << ","
+                 << g.personID << ","
+                 << g.boxCenter.x << "," << g.boxCenter.y << ","
+                 << g.start.x << "," << g.start.y << "," << g.start.z << ","
+                 << g.direction[0] << "," << g.direction[1] << "," << g.direction[2] << ","
+                 << "\"" << looking_at_ids << "\"\n";
+    }
 }

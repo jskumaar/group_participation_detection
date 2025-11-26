@@ -13,6 +13,7 @@
 #include <cmath>
 #include <deque>
 #include <vector>
+#include <fstream>
 
 class PanoViewer{
     public:
@@ -20,6 +21,7 @@ class PanoViewer{
             cv::Point3f start;
             cv::Vec3f direction;
             int personID;
+            cv::Point2f boxCenter;
         };
 
 
@@ -53,9 +55,11 @@ class PanoViewer{
         float computeFOVForPersonBox(const cv::Rect& box, int pano_height, int h_star_pixels, float r_head = 0.15f, float deg_min = 20.f, float deg_max = 110.f) const;
 
         //calc functions
-        gaze addGaze(int personID, float cam_yaw, float cam_pitch, float cam_fov, float pose_yaw, float pose_pitch, cv::Vec3f position);
+        gaze addGaze(float cam_yaw, float cam_pitch, float cam_fov, float pose_yaw, float pose_pitch, cv::Vec3f position);
 
 		void gaze_analysis(std::vector<gaze>& gazes);
+        void saveGazeAnalysis(std::ofstream& csv_file, long frame_number, const std::vector<gaze>& gazes);
+        bool isLookingAt(PanoViewer::gaze gaze, cv::Point3f facePos, float maxAngleDeg);
         
     private:
         //functions
@@ -88,6 +92,5 @@ class PanoViewer{
         int cached_pano_cols = -1;
         int cached_pano_rows = -1;
         void buildRemapTables(int pano_cols, int pano_rows);
-        bool isLookingAt(PanoViewer::gaze gaze, cv::Point3f facePos, float maxAngleDeg);
 
 };

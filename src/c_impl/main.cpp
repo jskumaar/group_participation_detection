@@ -17,6 +17,8 @@
 #include <string>
 #include <chrono>
 #include <sstream>
+#include <fstream>
+#include <map>
 
 
 // NEED FOR WINDOWS
@@ -153,6 +155,12 @@ int main() {
     // }
     float localizer_confidence = 0;
 	bool yolo_update = false;
+
+    std::ofstream csv_file("gaze_analysis.csv");
+    if (csv_file.is_open()) {
+        csv_file << "Frame,PersonID,BoxCenterX,BoxCenterY,GazeStartX,GazeStartY,GazeStartZ,GazeDirX,GazeDirY,GazeDirZ,LookingAtIDs\n";
+    }
+
     while (true) {
 		yolo_update = false;
         cap >> pano_frame;
@@ -218,16 +226,22 @@ int main() {
             }
             
             const float yaw_boost = eyeBoost(pose.yaw);
-            gazes.emplace_back(track.viewer->addGaze(track.id, 
-                                                      track.viewer->getYaw(), 
+
+            PanoViewer::gaze g = track.viewer->addGaze(track.viewer->getYaw(), 
                                                       -track.viewer->getPitch(), 
                                                       track.viewer->getFOV(), 
                                                       pose.yaw * yaw_boost, 
                                                       pose.pitch, 
-                                                      cv::Vec3f(pose.x, pose.y, pose.z)));
+                                                      cv::Vec3f(pose.x, pose.y, pose.z));
+            g.boxCenter = cv::Point2f(track.box.x + track.box.width / 2.0f, track.box.y + track.box.height / 2.0f);
+            g.personID = track.id;
+            gazes.emplace_back(g);
             perspective_view.release();
         }
-		pano_viewer.gaze_analysis(gazes);
+		//pano_viewer.gaze_analysis(gazes);
+
+        // Save to CSV
+        pano_viewer.saveGazeAnalysis(csv_file, (long)cap.get(cv::CAP_PROP_POS_FRAMES), gazes);
         //visualize(gp, 10, gazes);
         gazes.clear();
         //imshow("360° Viewer", pano_frame);

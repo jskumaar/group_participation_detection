@@ -3,7 +3,7 @@ codes/insta360/sdk/*
 codes/insta360/build/*
 src/models 
 src/c_impl/models/
-src/c_impl/out/
+src/c_impl/build/
 src/c_impl/onnx/
 src/c_impl/CmakeLists.txt
 src/c_impl/.vs/

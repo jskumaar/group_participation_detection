@@ -1,3 +1,4 @@
+#pragma once
 #include <opencv2/opencv.hpp>
 #include <onnxruntime_cxx_api.h>
 #include <iostream>
@@ -36,6 +37,12 @@ struct CamIntrinsics
     float fov_h;
 };
 
+struct TrackerConfig {
+    float head_size_mm = 200.f;
+    float nms_threshold = 0.3f;
+    float confidence_threshold = 0.5f;
+};
+
 
 class OPNetTracker {
     public:
@@ -43,6 +50,9 @@ class OPNetTracker {
         ~OPNetTracker() = default;
         Pose run(cv::Mat frame, int fov);
         std::vector<cv::Rect> run_yolo(cv::Mat frame);
+        
+        void setConfig(const TrackerConfig& config);
+        TrackerConfig getConfig() const { return config_; }
 
         // Expose the reframer/localizer input height for external use
         static int getInputHeight() { return INPUT_IMG_HEIGHT; }
@@ -68,9 +78,11 @@ class OPNetTracker {
         int padY;
 
 
-        static constexpr float HEAD_SIZE_MM = 200.f;
-        static constexpr float NMS_THRESHOLD = 0.3f;
-        static constexpr float CONFIDENCE_THRESHOLD = 0.5f;
+        TrackerConfig config_;
+
+        // static constexpr float HEAD_SIZE_MM = 200.f;
+        // static constexpr float NMS_THRESHOLD = 0.3f;
+        // static constexpr float CONFIDENCE_THRESHOLD = 0.5f;
         inline static constexpr int INPUT_IMG_WIDTH = 640;
         inline static constexpr int INPUT_IMG_HEIGHT = 640;
 };

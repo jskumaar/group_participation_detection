@@ -98,6 +98,11 @@ class Reframer
         Reframer(Ort::MemoryInfo &allocator_info,
                    Ort::Session &&session, float confidence, float iou);
         std::vector<DetectedPeople> run(const cv::Mat &frame);
+        
+        void setThresholds(float confidence, float iou) {
+            rectConfidenceThreshold = confidence;
+            iouThreshold = iou;
+        }
     private:
         void extract_detections(std::vector<Reframer::DetectedPeople>& oResult);
         Ort::Session session_{nullptr}; 

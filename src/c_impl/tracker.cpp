@@ -28,7 +28,7 @@ bool OPNetTracker::initialize() {
         session_options.SetIntraOpNumThreads(1);
         session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         allocator_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-        fs::path exe_dir = fs::current_path().parent_path().parent_path().parent_path();
+        fs::path exe_dir = fs::current_path().parent_path().parent_path();
         
 #ifdef _WIN32
         // Windows uses wstring for filesystem paths
@@ -37,7 +37,8 @@ bool OPNetTracker::initialize() {
         model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").wstring();
         poseestimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
         model_path = (exe_dir / L"models" / L"yolo11n.onnx").wstring();
-        reframer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options), CONFIDENCE_THRESHOLD, NMS_THRESHOLD);
+        model_path = (exe_dir / L"models" / L"yolo11n.onnx").wstring();
+        reframer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options), config_.confidence_threshold, config_.nms_threshold);
 #else
         // macOS/Linux uses string for filesystem paths
         std::string model_path = (exe_dir / "models" / "head-localizer.onnx").string();
@@ -45,7 +46,7 @@ bool OPNetTracker::initialize() {
         model_path = (exe_dir / "models" / "head-pose-0.3-big-quantized.onnx").string();
         poseestimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
         model_path = (exe_dir / "models" / "yolo11n.onnx").string();
-        reframer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options), CONFIDENCE_THRESHOLD, NMS_THRESHOLD);
+        reframer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options), config_.confidence_threshold, config_.nms_threshold);
 #endif
     }
     catch (const Ort::Exception &e)
@@ -60,6 +61,13 @@ bool OPNetTracker::initialize() {
         return false;
     }
     return true;
+}
+
+void OPNetTracker::setConfig(const TrackerConfig& config) {
+    config_ = config;
+    if (reframer_) {
+        reframer_->setThresholds(config_.confidence_threshold, config_.nms_threshold);
+    }
 }
 
 CamIntrinsics make_intrinsics(const cv::Mat& img, int fov)
@@ -172,7 +180,7 @@ cv::Vec3f rotate(const cv::Quatf& q, const cv::Vec3f& v)
 RawPose OPNetTracker::transform_to_world_pose(const cv::Quatf &face_rotation, const cv::Point2f& face_xy, const float face_size)
 {
     const cv::Vec3f face_world_pos = image_to_world(
-        face_xy.x, face_xy.y, face_size, HEAD_SIZE_MM,
+        face_xy.x, face_xy.y, face_size, config_.head_size_mm,
         grayscale.size(),
         intrinsics_);
 

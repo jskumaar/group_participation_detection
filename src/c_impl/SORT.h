@@ -15,8 +15,10 @@ public:
     std::shared_ptr<PanoViewer> viewer = nullptr;
     };
 
-    Sort(int max_age = 100, int min_hits = 3, double iou_threshold = 0.3);
+    Sort(int max_age = 1000, int min_hits = 3, double iou_threshold = 0.15);
     //^ default contructor
+
+    void setIOUThreshold(double threshold) { iou_threshold_ = threshold; }
 
     // Process detections for one frame and return current active tracks
     // viewer is forward-declared; include 360_image_process.h in SORT.cpp where implementation needs it

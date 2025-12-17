@@ -40,6 +40,8 @@ class PanoViewer{
         int getOutputWidth() const { return output_width; }
         int getOutputHeight() const { return output_height; }
 
+        void setMaxAngle(float angle_deg) { max_angle_threshold = angle_deg; }
+
         // Compute a vertical FOV (degrees) so a person's head will be approximately
         // `h_star_pixels` high in the perspective crop. `box` is the person bbox in pano pixels
         // and pano_height is the panorama height in pixels.
@@ -63,6 +65,8 @@ class PanoViewer{
         float pitch;      // Vertical rotation (up/down)
         float fov;       // Field of view (zoom level)
         bool needs_rebuild;
+
+        float max_angle_threshold = 20.0f;
 
         // Output dimensions 
         const int output_width = 640;

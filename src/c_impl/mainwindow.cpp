@@ -221,14 +221,14 @@ void MainWindow::processFrame(cv::Mat& pano_frame) {
     }
     
     // Tracking Logic (Adapted from main.cpp)
-    std::vector<cv::Rect> people;
-    // Prepare pure Rects for drawing
     std::vector<VideoWidget::PersonBox> currentPeople;
+    std::vector<cv::Rect> people;
 
-    
-    if (tracker.need_yolo_update()) {
+    bool interval_check = (frameCount % tracker.getConfig().yolo_check_interval == 0);
+    if (tracker.need_yolo_update() || (tracks.size() < num_people && interval_check)) {
         people = tracker.run_yolo(pano_frame);
         tracks = object_tracker.inject(people, pano_frame.rows, pano_frame.cols);
+        printf("yolo updated\n");
         tracker.yolo_updated();
     }
 
@@ -250,7 +250,7 @@ void MainWindow::processFrame(cv::Mat& pano_frame) {
                                                   track.viewer->getPitch(), 
                                                   track.viewer->getFOV(), 
                                                   pose->yaw * yaw_boost, 
-                                                  pose->pitch, 
+                                                  -pose->pitch, 
                                                   cv::Vec3f(pose->x, pose->y, pose->z));
         g.box = track.viewer->convertPerspectiveRectToEquirectangular(pose->rect, pano_frame.cols, pano_frame.rows);
         gazes.emplace_back(g);
@@ -304,11 +304,11 @@ void MainWindow::onVTKToggle(bool checked) {
 }
 
 float MainWindow::eyeBoost(float yaw_deg) {
-    // Copied from main.cpp
+    TrackerConfig config = tracker.getConfig();
     float y = std::abs(yaw_deg);
-    float max_boost = 0.7f;
-    float knee = 13.0f;
-    float steepness = 0.10f;
+    float max_boost = config.eye_boost_max;
+    float knee = config.eye_boost_knee;
+    float steepness = config.eye_boost_steepness;
     float extra = max_boost * (1.0f - 1.0f / (1.0f + std::exp((y - knee) * steepness)));
     return 1.0f + extra;
 }
@@ -344,6 +344,50 @@ void MainWindow::showSettings() {
     locBox->setValue(config.localizer_threshold);
     form.addRow("Localizer Threshold:", locBox);
 
+    QDoubleSpinBox *decayBox = new QDoubleSpinBox(&dialog);
+    decayBox->setRange(0, 1);
+    decayBox->setSingleStep(0.05);
+    decayBox->setValue(config.velocity_decay);
+    form.addRow("Velocity Decay:", decayBox);
+
+    QDoubleSpinBox *iouBox = new QDoubleSpinBox(&dialog);
+    iouBox->setRange(0, 1);
+    iouBox->setSingleStep(0.01);
+    iouBox->setValue(config.iou_threshold);
+    form.addRow("IOU Threshold:", iouBox);
+
+    QSpinBox *numPeopleBox = new QSpinBox(&dialog);
+    numPeopleBox->setRange(1, 20);
+    numPeopleBox->setValue(config.num_people);
+    form.addRow("Num People:", numPeopleBox);
+
+    QDoubleSpinBox *maxAngleBox = new QDoubleSpinBox(&dialog);
+    maxAngleBox->setRange(1, 180);
+    maxAngleBox->setValue(config.max_angle_deg);
+    form.addRow("Max Angle (deg):", maxAngleBox);
+
+    QDoubleSpinBox *kneeBox = new QDoubleSpinBox(&dialog);
+    kneeBox->setRange(0, 50);
+    kneeBox->setValue(config.eye_boost_knee);
+    form.addRow("Eye Boost Knee:", kneeBox);
+
+    QDoubleSpinBox *steepnessBox = new QDoubleSpinBox(&dialog);
+    steepnessBox->setRange(0, 1);
+    steepnessBox->setSingleStep(0.01);
+    steepnessBox->setValue(config.eye_boost_steepness);
+    form.addRow("Eye Boost Steepness:", steepnessBox);
+
+    QDoubleSpinBox *maxBoostBox = new QDoubleSpinBox(&dialog);
+    maxBoostBox->setRange(0, 5);
+    maxBoostBox->setSingleStep(0.1);
+    maxBoostBox->setValue(config.eye_boost_max);
+    form.addRow("Eye Boost Max:", maxBoostBox);
+
+    QSpinBox *yoloIntervalBox = new QSpinBox(&dialog);
+    yoloIntervalBox->setRange(1, 100);
+    yoloIntervalBox->setValue(config.yolo_check_interval);
+    form.addRow("YOLO Interval (frames):", yoloIntervalBox);
+
     QSpinBox *offsetBox = new QSpinBox(&dialog);
     offsetBox->setRange(-GLOBAL_FRAME_WIDTH, GLOBAL_FRAME_WIDTH);
     offsetBox->setValue(panorama_offset);
@@ -359,7 +403,23 @@ void MainWindow::showSettings() {
         config.nms_threshold = nmsBox->value();
         config.confidence_threshold = confBox->value();
         config.localizer_threshold = locBox->value();
+        config.velocity_decay = decayBox->value();
+        config.iou_threshold = iouBox->value();
+        config.num_people = numPeopleBox->value();
+        config.max_angle_deg = maxAngleBox->value();
+        
+        config.eye_boost_knee = kneeBox->value();
+        config.eye_boost_steepness = steepnessBox->value();
+        config.eye_boost_max = maxBoostBox->value();
+        config.yolo_check_interval = yoloIntervalBox->value();
+        
         tracker.setConfig(config);
+        
+        // Update Objects
+        object_tracker.setIOUThreshold(config.iou_threshold);
+        KalmanTracker::decay_velocity_factor = config.velocity_decay;
+        this->num_people = config.num_people;
+        pano_viewer.setMaxAngle(config.max_angle_deg);
         
         panorama_offset = offsetBox->value();
     }

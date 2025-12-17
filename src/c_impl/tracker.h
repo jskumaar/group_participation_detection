@@ -38,7 +38,18 @@ struct TrackerConfig {
     float head_size_mm = 200.f;
     float nms_threshold = 0.3f;
     float confidence_threshold = 0.5f;
-    float localizer_threshold = 0.3f;
+    float localizer_threshold = 0.5f;
+    
+    float velocity_decay = 0.2f;
+    float iou_threshold = 0.15f;
+    int num_people = 3;
+    float max_angle_deg = 20.0f;
+    
+    float eye_boost_knee = 13.0f;
+    float eye_boost_steepness = 0.10f;
+    float eye_boost_max = 0.7f;
+    
+    int yolo_check_interval = 30;
 };
 
 

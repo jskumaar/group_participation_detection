@@ -245,7 +245,7 @@ void PanoViewer::gaze_analysis(std::vector<gaze>& gazes) {
             const auto& gj = gazes[j];
 
 
-            if (isLookingAt(gi, gj.start, 20)) {
+            if (isLookingAt(gi, gj.start, max_angle_threshold)) {
                 std::cout << "Person " << gi.personID
                     << " is looking at person " << gj.personID
                     << std::endl;
@@ -286,7 +286,7 @@ void PanoViewer::saveGazeAnalysis(std::ofstream& csv_file, long frame_number, co
         std::string looking_at_ids = "";
         for (const auto& other : gazes) {
             if (g.personID == other.personID) continue;
-            if (isLookingAt(g, other.start, 20)) {
+            if (isLookingAt(g, other.start, max_angle_threshold)) {
                 if (!looking_at_ids.empty()) looking_at_ids += ";";
                 looking_at_ids += std::to_string(other.personID);
             }

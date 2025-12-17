@@ -79,7 +79,7 @@ private:
     std::ofstream csv_file;
     float eyeBoost(float yaw_deg);
 
-
+    int num_people = 3;
     
     GazeVisualizer *gazeVisualizer;
 };

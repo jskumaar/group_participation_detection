@@ -27,7 +27,7 @@ GazeVisualizer::GazeVisualizer(QWidget *parent) : QVTKOpenGLNativeWidget(parent)
 }
 
 GazeVisualizer::~GazeVisualizer() {
-    // VTK smart pointers handle cleanup
+// VTK smart pointers handle cleanup
 }
 
 void GazeVisualizer::updateData(const std::vector<PanoViewer::gaze>& gazes) {
@@ -89,7 +89,7 @@ void GazeVisualizer::updateData(const std::vector<PanoViewer::gaze>& gazes) {
         }
         
         PersonActors& actors = actorsMap[p.personID];
-        
+
         // Update Head Position
         // Assuming p.start is (x, y, z)
         actors.headActor->SetPosition(p.start.x, p.start.y, p.start.z);
@@ -111,7 +111,7 @@ void GazeVisualizer::updateData(const std::vector<PanoViewer::gaze>& gazes) {
         // Default direction is (1, 0, 0)
         double defaultDir[3] = {1.0, 0.0, 0.0};
         double targetDir[3] = { (double)p.direction[0], (double)p.direction[1], (double)p.direction[2] };
-        
+
         // Normalize target (should be already, but safety first)
         double norm = std::sqrt(targetDir[0]*targetDir[0] + targetDir[1]*targetDir[1] + targetDir[2]*targetDir[2]);
         if (norm > 0) {
@@ -126,9 +126,14 @@ void GazeVisualizer::updateData(const std::vector<PanoViewer::gaze>& gazes) {
         axis[1] = defaultDir[2]*targetDir[0] - defaultDir[0]*targetDir[2];
         axis[2] = defaultDir[0]*targetDir[1] - defaultDir[1]*targetDir[0];
         
-        double angleRad = std::acos(defaultDir[0]*targetDir[0] + defaultDir[1]*targetDir[1] + defaultDir[2]*targetDir[2]);
+        // Calculate dot product and clamp to [-1, 1] to avoid domain error (NaN)
+        double dotProd = defaultDir[0]*targetDir[0] + defaultDir[1]*targetDir[1] + defaultDir[2]*targetDir[2];
+        if (dotProd < -1.0) dotProd = -1.0;
+        else if (dotProd > 1.0) dotProd = 1.0;
+
+        double angleRad = std::acos(dotProd);
         double angleDeg = angleRad * 180.0 / 3.14159265;
-        
+
         // If vectors are parallel (angle 0) or anti-parallel (angle 180), handle degenerate axis
         if (std::abs(angleDeg) > 0.1 && std::abs(angleDeg) < 179.9) {
              transform->RotateWXYZ(angleDeg, axis);

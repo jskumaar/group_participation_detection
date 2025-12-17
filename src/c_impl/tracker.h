@@ -8,13 +8,15 @@
 #include <optional>
 #include "model_core.h"
 
+
 typedef struct yaw_pitch_roll {
-    float yaw;
-    float pitch;
-    float roll;
-    float x;
-    float y;
-    float z;
+    cv::Rect2f rect;
+    int yaw;
+    int pitch;
+    int roll;
+    int x;
+    int y;
+    int z;
 	float confidence;
 } Pose;
 
@@ -23,11 +25,6 @@ typedef struct RawPose {
     cv::Vec3f position;
 } RawPose;
 
-struct Detection {
-    cv::Rect box;
-    float confidence;
-    int class_id;
-};
 
 struct CamIntrinsics
 {
@@ -41,6 +38,7 @@ struct TrackerConfig {
     float head_size_mm = 200.f;
     float nms_threshold = 0.3f;
     float confidence_threshold = 0.5f;
+    float localizer_threshold = 0.3f;
 };
 
 
@@ -48,7 +46,7 @@ class OPNetTracker {
     public:
         OPNetTracker();
         ~OPNetTracker() = default;
-        Pose run(cv::Mat frame, int fov);
+        std::optional<Pose> run(cv::Mat frame, int fov);
         std::vector<cv::Rect> run_yolo(cv::Mat frame);
         
         void setConfig(const TrackerConfig& config);
@@ -56,6 +54,8 @@ class OPNetTracker {
 
         // Expose the reframer/localizer input height for external use
         static int getInputHeight() { return INPUT_IMG_HEIGHT; }
+        void yolo_updated() { needs_yolo_update = false; }
+        float need_yolo_update() { return needs_yolo_update; }
 
     private:
         bool initialize();
@@ -63,7 +63,7 @@ class OPNetTracker {
         RawPose transform_to_world_pose(const cv::Quatf &face_rotation, const cv::Point2f& face_xy, const float face_size);
         cv::Mat yolo_scale(cv::Mat& img);
         std::vector<cv::Rect> yolo_unscale(std::vector<Reframer::DetectedPeople> &detections);
-        Pose detect();
+        std::optional<Pose> detect();
         cv::Mat grayscale;
         Ort::Env env{nullptr};  // Keep environment alive
         Ort::MemoryInfo allocator_info{nullptr};
@@ -76,6 +76,9 @@ class OPNetTracker {
         float resizeScales;
         int padX;
         int padY;
+
+        bool needs_yolo_update;
+
 
 
         TrackerConfig config_;

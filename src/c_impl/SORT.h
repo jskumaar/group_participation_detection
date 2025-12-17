@@ -5,25 +5,23 @@
 #include "sort-cpp/sort-c++/Hungarian.h"
 #include "sort-cpp/sort-c++/KalmanTracker.h"
 
-// Forward declare PanoViewer to avoid circular include with 360_image_process.h
-class PanoViewer;
+#include "360_image_process.h"
 
 // SORT output. a track object with bbox and id
 
 class Sort {
 public:
     struct Track {
-    int id;             // track ID
-    cv::Rect2f box;     // pixel coordinates
-    PanoViewer* viewer = nullptr;
+    std::shared_ptr<PanoViewer> viewer = nullptr;
     };
 
-    Sort(int max_age = 1, int min_hits = 3, double iou_threshold = 0.3);
+    Sort(int max_age = 100, int min_hits = 3, double iou_threshold = 0.3);
     //^ default contructor
 
     // Process detections for one frame and return current active tracks
     // viewer is forward-declared; include 360_image_process.h in SORT.cpp where implementation needs it
-    std::vector<Track> update(const std::vector<cv::Rect>& detections, int rows, int cols);
+    std::vector<PanoViewer::gaze> update(const std::vector<PanoViewer::gaze>& detections);
+    std::vector<Track> inject(std::vector<cv::Rect> detections, int rows, int cols);
 
 private:
     double getIOU(const cv::Rect2f& bb_test, const cv::Rect2f& bb_gt);

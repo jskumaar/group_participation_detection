@@ -21,23 +21,14 @@ class PanoViewer{
             cv::Point3f start;
             cv::Vec3f direction;
             int personID;
-            cv::Point2f boxCenter;
+            cv::Rect2f box;
         };
-
-
-        struct gaze_window{
-            std::deque<int> sights; // queue of n frames, each with data holding a person_id at who this person is looking at 
-            std::vector<int> counts; // an array of num_people size mapping index to num frames the person looks at another person with index id
-            int personID;
-            int max_window_length; // after hits this, start removing frames from front and add frame to back 
-        };
-        // window_length in frames, 
 
 
 
         PanoViewer();
         ~PanoViewer();
-        cv::Mat generatePerspectiveView(const cv::Mat& pano, bool needs_rebuild);
+        cv::Mat generatePerspectiveView(const cv::Mat& pano);
         void setYaw(float new_yaw);
         void setPitch(float new_pitch);
         void setFOV(float new_fov);
@@ -56,6 +47,7 @@ class PanoViewer{
 
         //calc functions
         gaze addGaze(float cam_yaw, float cam_pitch, float cam_fov, float pose_yaw, float pose_pitch, cv::Vec3f position);
+        cv::Rect convertPerspectiveRectToEquirectangular(const cv::Rect& perspective_box, int pano_width, int pano_height) const;
 
 		void gaze_analysis(std::vector<gaze>& gazes);
         void saveGazeAnalysis(std::ofstream& csv_file, long frame_number, const std::vector<gaze>& gazes);
@@ -63,7 +55,6 @@ class PanoViewer{
         
     private:
         //functions
-        std::pair<float, float> apply_head_offset_correction(float yaw, float pitch, float fov, cv::Vec3f head_offset);
         cv::Point2f sphericalToEquirectangular(float theta, float phi, int pano_width, int pano_height);
 
         
@@ -71,6 +62,7 @@ class PanoViewer{
         float yaw;        // Horizontal rotation (left/right)
         float pitch;      // Vertical rotation (up/down)
         float fov;       // Field of view (zoom level)
+        bool needs_rebuild;
 
         // Output dimensions 
         const int output_width = 640;

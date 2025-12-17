@@ -258,6 +258,7 @@ PoseEstimator::PoseEstimator(Ort::MemoryInfo &allocator_info, Ort::Session &&ses
 std::optional<PoseEstimator::Face> PoseEstimator::run(
     const cv::Mat &frame, const cv::Rect &box)
 {
+
     cv::Mat cropped;
 
     const int patch_size = std::max(box.width, box.height)*1.05;

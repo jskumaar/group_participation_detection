@@ -24,7 +24,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     fpsTimer.start();
 
 
-    // Open CSV for logging
+    // Open CSV for logging    
     csv_file.open("gaze_analysis.csv");
     if (csv_file.is_open()) {
         csv_file << "Frame,PersonID,BoxCenterX,BoxCenterY,GazeStartX,GazeStartY,GazeStartZ,GazeDirX,GazeDirY,GazeDirZ,LookingAtIDs\n";
@@ -79,17 +79,18 @@ void MainWindow::setupUI() {
 
     visualsCheckBox = new QCheckBox("Draw Overlays", this);
     visualsCheckBox->setChecked(true);
-    connect(visualsCheckBox, &QCheckBox::stateChanged, this, &MainWindow::toggleVisuals);
+    connect(visualsCheckBox, &QCheckBox::toggled, this, &MainWindow::toggleVisuals);
     controlsLayout->addWidget(visualsCheckBox);
 
     videoToggleBtn = new QCheckBox("Show Video", this);
     videoToggleBtn->setChecked(true);
-    connect(videoToggleBtn, &QCheckBox::stateChanged, this, &MainWindow::onVideoToggle);
+    connect(videoToggleBtn, &QCheckBox::toggled, this, &MainWindow::onVideoToggle);
     controlsLayout->addWidget(videoToggleBtn);
 
     vtkToggleBtn = new QCheckBox("Show 3D", this);
     vtkToggleBtn->setChecked(true);
-    connect(vtkToggleBtn, &QCheckBox::stateChanged, this, &MainWindow::onVTKToggle);
+    connect(vtkToggleBtn, &QCheckBox::toggled, this, &MainWindow::onVTKToggle);
+
     controlsLayout->addWidget(vtkToggleBtn);
 
     mainLayout->addLayout(controlsLayout);
@@ -218,19 +219,17 @@ void MainWindow::processFrame(cv::Mat& pano_frame) {
             pano_frame = result;
         }
     }
-
-    yolo_update = false;
     
     // Tracking Logic (Adapted from main.cpp)
     std::vector<cv::Rect> people;
     // Prepare pure Rects for drawing
     std::vector<VideoWidget::PersonBox> currentPeople;
+
     
-    if (localizer_confidence < localizer_threshold) {
+    if (tracker.need_yolo_update()) {
         people = tracker.run_yolo(pano_frame);
-        tracks = object_tracker.update(people, pano_frame.rows, pano_frame.cols);
-        localizer_confidence = 1.0f;
-        yolo_update = true;
+        tracks = object_tracker.inject(people, pano_frame.rows, pano_frame.cols);
+        tracker.yolo_updated();
     }
 
     cv::Mat perspective_view;
@@ -238,38 +237,31 @@ void MainWindow::processFrame(cv::Mat& pano_frame) {
     
     // Clear old data points if too many
     // For simplicity, we just append. In a real app, we'd scroll/cull.
-    
     for (const auto& track : tracks) {
-         perspective_view = track.viewer->generatePerspectiveView(pano_frame, yolo_update);
-         Pose pose = tracker.run(perspective_view, static_cast<int>(track.viewer->getFOV()));
          
-         if (pose.confidence < localizer_threshold) {
-             localizer_confidence = pose.confidence;
-             continue; 
-         }
-
-
+         perspective_view = track.viewer->generatePerspectiveView(pano_frame);
+         auto pose = tracker.run(perspective_view, static_cast<int>(track.viewer->getFOV()));
+        if (!pose.has_value()){
+            continue;
+        }
+        float yaw_boost = eyeBoost(pose->yaw);
          
-         float yaw_boost = eyeBoost(pose.yaw);
-         
-         PanoViewer::gaze g = track.viewer->addGaze(track.viewer->getYaw(),  
-                                                  -track.viewer->getPitch(), 
+        PanoViewer::gaze g = track.viewer->addGaze(track.viewer->getYaw(),  
+                                                  track.viewer->getPitch(), 
                                                   track.viewer->getFOV(), 
-                                                  pose.yaw * yaw_boost, 
-                                                  pose.pitch, 
-                                                  cv::Vec3f(pose.x, pose.y, pose.z));
-        
-        g.boxCenter = cv::Point2f(track.box.x + track.box.width / 2.0f, track.box.y + track.box.height / 2.0f);
-        g.personID = track.id;
+                                                  pose->yaw * yaw_boost, 
+                                                  pose->pitch, 
+                                                  cv::Vec3f(pose->x, pose->y, pose->z));
+        g.box = track.viewer->convertPerspectiveRectToEquirectangular(pose->rect, pano_frame.cols, pano_frame.rows);
         gazes.emplace_back(g);
         perspective_view.release();
-
-        currentPeople.push_back({track.box, track.id});
     }
-    
+
+    gazes = object_tracker.update(gazes);
     // Save to CSV if playing
     if (isPlaying) {
          pano_viewer.saveGazeAnalysis(csv_file, (long)cap.get(cv::CAP_PROP_POS_FRAMES), gazes);
+         csv_file.flush(); 
     }
 
     // Update 3D Visualizer
@@ -279,12 +271,15 @@ void MainWindow::processFrame(cv::Mat& pano_frame) {
     
     // Update Visuals
     if (showVideo) {
+        for(const auto& g : gazes){
+            currentPeople.push_back({g.box, g.personID});
+        }
         videoWidget->updateOverlays(currentPeople);
         videoWidget->updateFrame(pano_frame);
     }
 
     // Update YOLO Status
-    if (yolo_update) {
+    if (tracker.need_yolo_update()) {
         yoloLabel->setText("YOLO: ACTIVE");
         yoloLabel->setStyleSheet("QLabel { color : green; font-weight: bold; }");
     } else {
@@ -293,19 +288,19 @@ void MainWindow::processFrame(cv::Mat& pano_frame) {
     }
 }
 
-void MainWindow::toggleVisuals(int state) {
-    videoWidget->setShowVisuals(state == Qt::Checked);
+void MainWindow::toggleVisuals(bool checked) {
+    videoWidget->setShowVisuals(checked);
 }
 
-void MainWindow::onVideoToggle(int state) {
-    showVideo = (state == Qt::Checked);
+void MainWindow::onVideoToggle(bool checked) {
+    showVideo = checked;
     if (!showVideo) {
          // Optionally clear video widget or leave last frame
     }
 }
 
-void MainWindow::onVTKToggle(int state) {
-    showVTK = (state == Qt::Checked);
+void MainWindow::onVTKToggle(bool checked) {
+    showVTK = checked;
 }
 
 float MainWindow::eyeBoost(float yaw_deg) {
@@ -346,7 +341,7 @@ void MainWindow::showSettings() {
     QDoubleSpinBox *locBox = new QDoubleSpinBox(&dialog);
     locBox->setRange(0, 1);
     locBox->setSingleStep(0.01);
-    locBox->setValue(localizer_threshold);
+    locBox->setValue(config.localizer_threshold);
     form.addRow("Localizer Threshold:", locBox);
 
     QSpinBox *offsetBox = new QSpinBox(&dialog);
@@ -363,11 +358,9 @@ void MainWindow::showSettings() {
         config.head_size_mm = headSizeBox->value();
         config.nms_threshold = nmsBox->value();
         config.confidence_threshold = confBox->value();
+        config.localizer_threshold = locBox->value();
         tracker.setConfig(config);
         
-        tracker.setConfig(config);
-        
-        localizer_threshold = locBox->value();
         panorama_offset = offsetBox->value();
     }
 }

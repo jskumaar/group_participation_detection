@@ -37,7 +37,6 @@ bool OPNetTracker::initialize() {
         model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").wstring();
         poseestimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
         model_path = (exe_dir / L"models" / L"yolo11n.onnx").wstring();
-        model_path = (exe_dir / L"models" / L"yolo11n.onnx").wstring();
         reframer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options), config_.confidence_threshold, config_.nms_threshold);
 #else
         // macOS/Linux uses string for filesystem paths
@@ -86,13 +85,13 @@ CamIntrinsics make_intrinsics(const cv::Mat& img, int fov)
       | /  2 x angle is the fov
       |/
         <--- here is the hole of the pinhole camera
-
+ 
       So, a / f = tan(fov / 2)
       => f = a/tan(fov/2)
       What is a?
       1 if we define f in terms of clip space where the image plane goes from -1 to 1. Because a is the half-width.
     */
-
+ 
     return {
         (float)focal_length_w,
         (float)focal_length_h,
@@ -154,7 +153,7 @@ cv::Quatf rotation_from_two_vectors(const cv::Vec3f &a, const cv::Vec3f &b)
     const cv::Vec3f axis = a.cross(b);
     // dot = |a|*|b|*cos(alpha)
     const float dot = a.dot(b);
-    const float len = cv::norm(axis);
+    const float len = static_cast<float>(cv::norm(axis));
     cv::Vec3f normed_axis = axis / len;
     float angle = std::atan2(len, dot);
     if (!(std::isfinite(normed_axis[0]) && std::isfinite(normed_axis[1]) && std::isfinite(normed_axis[2])))
@@ -221,15 +220,20 @@ void OPNetTracker::prepare_input_image(cv::Mat &img){
     cv::cvtColor(img, grayscale, cv::COLOR_BGR2GRAY);
 }
 
-Pose OPNetTracker::run(cv::Mat frame, int fov){
+std::optional<Pose> OPNetTracker::run(cv::Mat frame, int fov){
     prepare_input_image(frame);
     intrinsics_ = make_intrinsics(frame, fov);
     return detect();
 }
 
 
-Pose OPNetTracker::detect(){
+std::optional<Pose> OPNetTracker::detect(){
+
     auto [p, rect] = localizer_->run(grayscale);
+    if(p< config_.localizer_threshold){
+        needs_yolo_update = true;
+        return std::nullopt;
+    }
     auto face = poseestimator_->run(grayscale, rect);
 
     RawPose raw_pose = transform_to_world_pose((*face).rotation, (*face).center, (*face).size);
@@ -248,7 +252,8 @@ Pose OPNetTracker::detect(){
 
     constexpr double rad2deg = 180/M_PI;
 
-    return {(float)(yaw*rad2deg), (float)(pitch*rad2deg), (float)(roll*-rad2deg), (float)(-raw_pose.position[2]*0.1), (float)(raw_pose.position[1]*0.1), (float)(-raw_pose.position[0]*0.1), p};
+    Pose out {rect, (float)(yaw*rad2deg), (float)(pitch*rad2deg), (float)(roll*-rad2deg), (float)(-raw_pose.position(2)*0.1), (float)(raw_pose.position(1)*0.1), (float)(-raw_pose.position(0)*0.1), p};
+    return out;
 }
 
 cv::Mat OPNetTracker::yolo_scale(cv::Mat& img) {

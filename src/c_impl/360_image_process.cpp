@@ -16,8 +16,8 @@ PanoViewer::~PanoViewer() {
     
     // Convert spherical coordinates to equirectangular coordinates
 cv::Point2f PanoViewer::sphericalToEquirectangular(float theta, float phi, int pano_width, int pano_height) {
-    float x = (theta / (2 * PI) + 0.5f) * pano_width;
-    float y = (phi / PI + 0.5f) * pano_height;
+    float x = (theta / (2 * M_PI) + 0.5f) * pano_width;
+    float y = (phi / M_PI + 0.5f) * pano_height;
     return cv::Point2f(x, y);
 }
 
@@ -31,24 +31,61 @@ void PanoViewer::buildRemapTables(int pano_cols, int pano_rows) {
     float yaw_rad = yaw * DEG_TO_RAD;
     float pitch_rad = pitch * DEG_TO_RAD;
     float fov_factor = 1.0f / tan(fov_rad * 0.5f);
+
+    float cy = cosf(yaw_rad),   sy = sinf(yaw_rad);
+    float cp = cosf(pitch_rad), sp = sinf(pitch_rad);
+
     for (int y = 0; y < output_height; y++) {
         float* map_x_row = map_x.ptr<float>(y);
         float* map_y_row = map_y.ptr<float>(y);
-        float screen_y = (2.0f * y / output_height) - 1.0f;
+        float screen_y = 1.0f - (2.0f * (y + 0.5f) / (float)output_height);
         for (int x = 0; x < output_width; x++) {
-            float screen_x = ((2.0f * x / output_width) - 1.0f) * aspect_ratio;
-            float theta = atan2(screen_x, fov_factor);
-            float phi = atan2(screen_y * cos(theta), fov_factor);
-            float new_theta = theta + yaw_rad;
-            float new_phi = std::max(-PI / 2.0f, std::min(PI / 2.0f, phi + pitch_rad));
-            cv::Point2f eq_coord = sphericalToEquirectangular(new_theta, new_phi, pano_cols, pano_rows);
-            // Handle horizontal wrapping
-            while (eq_coord.x < 0) eq_coord.x += pano_cols;
-            while (eq_coord.x >= pano_cols) eq_coord.x -= pano_cols;
-            // Clamp vertical
-            eq_coord.y = std::max(0.0f, std::min((float)pano_rows - 1, eq_coord.y));
-            map_x_row[x] = eq_coord.x;
-            map_y_row[x] = eq_coord.y;
+            float screen_x = (2.0f * (x + 0.5f) / (float)output_width) - 1.0f;
+            screen_x *= aspect_ratio;
+
+            // 1) Build camera ray (not yet normalized is OK, but we normalize for stability)
+            float vx = screen_x;
+            float vy = screen_y;
+            float vz = fov_factor;
+
+            float inv_len = 1.0f / sqrtf(vx*vx + vy*vy + vz*vz);
+            vx *= inv_len; vy *= inv_len; vz *= inv_len;
+
+            // 2) Apply pitch rotation about X axis first
+            // y' = cos(pitch)*y + sin(pitch)*z
+            // z' = sin(pitch)*y - cos(pitch)*z
+            float y1 =  cp * vy + sp * vz;
+            float z1 = -sp * vy + cp * vz;
+            float x1 =  vx;
+
+            // 3) Apply yaw rotation about Y axis
+            // x'' =  cos(yaw)*x + sin(yaw)*z
+            // z'' = -sin(yaw)*x + cos(yaw)*z
+            float x2 =  cy * x1 + sy * z1;
+            float z2 = -sy * x1 + cy * z1;
+            float y2 =  y1;
+
+            // 4) Convert direction vector -> lon/lat
+            float lon = atan2f(x2, z2); // [-pi, pi]
+            float lat = asinf(std::max(-1.0f, std::min(1.0f, y2))); // [-pi/2, pi/2]
+
+            // 5) Map lon/lat -> equirectangular pixel coords
+            // lon: -pi..pi maps to 0..pano_cols
+            float u = (lon / (2.0f * (float)M_PI) + 0.5f) * pano_cols;
+
+            // lat: +pi/2 (top) to -pi/2 (bottom)
+            // If your pano uses the opposite convention, flip this sign.
+            float v = (0.5f - (lat / (float)M_PI)) * pano_rows;
+
+            // 6) Wrap horizontally, clamp vertically
+            u = fmodf(u, (float)pano_cols);
+            if (u < 0) u += pano_cols;
+
+            if (v < 0.0f) v = 0.0f;
+            if (v > (float)pano_rows - 1.0f) v = (float)pano_rows - 1.0f;
+
+            map_x_row[x] = u;
+            map_y_row[x] = v;
         }
     }
     // Update cache
@@ -61,11 +98,12 @@ void PanoViewer::buildRemapTables(int pano_cols, int pano_rows) {
     cached_pano_rows = pano_rows;
 }
 
-cv::Mat PanoViewer::generatePerspectiveView(const cv::Mat& pano, bool needs_rebuild) {
+cv::Mat PanoViewer::generatePerspectiveView(const cv::Mat& pano) {
     // Rebuild lookup tables only if parameters changed significantly
 
-    if (needs_rebuild) {
+    if (needs_rebuild || map_x.empty() || map_y.empty()) {
         buildRemapTables(pano.cols, pano.rows);
+        needs_rebuild = false;
     }
     cv::Mat output;
     // Use OpenCV's optimized remap function with bilinear interpolation
@@ -89,14 +127,7 @@ static inline cv::Vec3f dir_from_yaw_pitch(float yaw, float pitch) {
     ));
 }
 
-// 2:1 equirectangular mapping -> direction FROM camera
-// u ∈ [0, W), v ∈ [0, H)
-// yaw (λ) ∈ (-π, π], pitch (φ) ∈ [-π/2, π/2]
-static inline cv::Vec3f pano_pixel_to_direction(int u, int v, int W, int H) {
-    float yaw   = ( (float)u / (float)W ) * 2.0f * (float)M_PI - (float)M_PI;        // -π..π
-    float pitch = (0.5f - (float)v / (float)H) * (float)M_PI;                        // -π/2..π/2
-    return dir_from_yaw_pitch(yaw, pitch); // matches our (z-forward, x-right, y-up) convention
-}
+
 
 /**
  * Convert local yaw/pitch (relative to person-facing-camera) to a global/world gaze direction.
@@ -127,18 +158,6 @@ cv::Vec3f global_gaze_from_panorama(float yaw, float pitch,
     // Rotate local -> world
     cv::Vec3f global = right * local[0] + up * local[1] + forward * local[2];
     return unit(global);
-}
-
-std::pair<float, float> PanoViewer::apply_head_offset_correction(float yaw, float pitch, float fov, cv::Vec3f head_offset) {
-    float nx = head_offset[0] / (output_width/ 2);   // ranges roughly -1..1
-    float ny = head_offset[1] / (output_height/ 2);   // ranges roughly -1..1
-
-    nx *= aspect_ratio;
-
-    float theta = atan2(nx, 1.0f / tan(fov * 0.5f));
-    float phi = atan2(ny * cos(theta), 1.0f / tan(fov * 0.5f));
-
-	return { (yaw + theta) * RAD_TO_DEG, (pitch + phi) * RAD_TO_DEG };
 }
 
 PanoViewer::gaze PanoViewer::addGaze(float cam_yaw, float cam_pitch, float cam_fov, float yaw, float pitch, cv::Vec3f position) {
@@ -178,14 +197,17 @@ PanoViewer::gaze PanoViewer::addGaze(float cam_yaw, float cam_pitch, float cam_f
 
 void PanoViewer::setYaw(float new_yaw) {
     yaw = new_yaw;
+    needs_rebuild = true;
 }
 
 void PanoViewer::setPitch(float new_pitch) {
     pitch = new_pitch;
+    needs_rebuild = true;
 }
 
 void PanoViewer::setFOV(float new_fov) {
     fov = new_fov;
+    needs_rebuild = true;
 }
 
 float PanoViewer::getFOV() {
@@ -272,9 +294,99 @@ void PanoViewer::saveGazeAnalysis(std::ofstream& csv_file, long frame_number, co
 
         csv_file << frame_number << ","
                  << g.personID << ","
-                 << g.boxCenter.x << "," << g.boxCenter.y << ","
+                 << (g.box.x + g.box.width / 2.0f) << "," << (g.box.y + g.box.height / 2.0f) << ","
                  << g.start.x << "," << g.start.y << "," << g.start.z << ","
                  << g.direction[0] << "," << g.direction[1] << "," << g.direction[2] << ","
                  << "\"" << looking_at_ids << "\"\n";
     }
 }
+
+// Convert a bounding box from a specific perspective view back to the full equirectangular panorama
+cv::Rect PanoViewer::convertPerspectiveRectToEquirectangular(const cv::Rect& perspective_box, int pano_width, int pano_height) const {
+    
+    // We will project the 4 corners of the perspective box
+    std::vector<cv::Point2f> corners;
+    corners.push_back(cv::Point2f(perspective_box.x, perspective_box.y));
+    corners.push_back(cv::Point2f(perspective_box.x + perspective_box.width, perspective_box.y));
+    corners.push_back(cv::Point2f(perspective_box.x + perspective_box.width, perspective_box.y + perspective_box.height));
+    corners.push_back(cv::Point2f(perspective_box.x, perspective_box.y + perspective_box.height));
+
+    float aspect_ratio = (float)output_width / output_height;
+    float fov_rad = fov * DEG_TO_RAD;
+    float yaw_rad = yaw * DEG_TO_RAD;
+    float pitch_rad = pitch * DEG_TO_RAD;
+    float fov_factor = 1.0f / tan(fov_rad * 0.5f);
+
+    float cy = cosf(yaw_rad), sy = sinf(yaw_rad);
+    float cp = cosf(pitch_rad), sp = sinf(pitch_rad);
+
+    float min_u = 1e9, max_u = -1e9;
+    float min_v = 1e9, max_v = -1e9;
+
+    for (const auto& pt : corners) {
+        // 1) Normalize to screen coords [-1, 1]
+        // Note: Code mirrors buildRemapTables logic
+        float screen_y = 1.0f - (2.0f * (pt.y + 0.5f) / (float)output_height);
+        float screen_x = (2.0f * (pt.x + 0.5f) / (float)output_width) - 1.0f;
+        screen_x *= aspect_ratio;
+
+        // 2) Build camera ray
+        float vx = screen_x;
+        float vy = screen_y;
+        float vz = fov_factor;
+
+        float inv_len = 1.0f / sqrtf(vx*vx + vy*vy + vz*vz);
+        vx *= inv_len; vy *= inv_len; vz *= inv_len;
+
+        // 3) Apply pitch rotation (about X)
+        float y1 =  cp * vy + sp * vz;
+        float z1 = -sp * vy + cp * vz;
+        float x1 =  vx;
+
+        // 4) Apply yaw rotation (about Y)
+        float x2 =  cy * x1 + sy * z1;
+        float z2 = -sy * x1 + cy * z1;
+        float y2 =  y1;
+
+        // 5) Convert to spherical (lon, lat)
+        float lon = atan2f(x2, z2); // [-pi, pi]
+        float lat = asinf(std::max(-1.0f, std::min(1.0f, y2))); // [-pi/2, pi/2]
+
+        // 6) Map to equirectangular pixel coords
+        // lon: -pi..pi -> 0..pano_width
+        float u = (lon / (2.0f * (float)M_PI) + 0.5f) * pano_width;
+        
+        // lat: +pi/2..-pi/2 -> 0..pano_height
+        // Note: buildRemapTables used (0.5 - lat/pi) which maps +pi/2 to 0 (top)
+        float v = (0.5f - (lat / (float)M_PI)) * pano_height;
+
+        // 7) Wrap/Clamp
+        u = fmodf(u, (float)pano_width);
+        if (u < 0) u += pano_width;
+
+        if (v < 0.0f) v = 0.0f;
+        if (v > (float)pano_height - 1.0f) v = (float)pano_height - 1.0f;
+
+        if (u < min_u) min_u = u;
+        if (u > max_u) max_u = u;
+        if (v < min_v) min_v = v;
+        if (v > max_v) max_v = v;
+    }
+
+    // Handle wrapping case: if the box spans across the seam (e.g., wrap around 360/0)
+    // Heuristic: if width > half the panorama, assume it wrapped.
+    if ((max_u - min_u) > (pano_width / 2.0f)) {
+        // Naive handling: usually implies the object is on the seam.
+        // For purposes of returning a single Rect, this is tricky. 
+        // We might return the union of the two sides or just one side.
+        // Given this is for visualization/tracking, keeping the larger 'wrapped' box might be confusing visually 
+        // as it would span the entire image.
+        // A better approach for a rect might be to ensure min_u < max_u by adding pano_width to negative values 
+        // before min/max finding, but 'u' is already normalized 0..width.
+        // Let's leave as is for now unless seam artifacts become critical.
+    }
+
+    return cv::Rect((int)min_u, (int)min_v, (int)(max_u - min_u), (int)(max_v - min_v));
+}
+
+

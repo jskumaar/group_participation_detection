@@ -9,6 +9,8 @@
 #include <vtkBillboardTextActor3D.h>
 #include <vector>
 #include <map>
+#include <iostream>
+#include <fstream>
 #include "360_image_process.h" 
 
 class GazeVisualizer : public QVTKOpenGLNativeWidget {

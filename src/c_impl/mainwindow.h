@@ -18,10 +18,10 @@
 
 #include "gazevisualizer.h"
 
-
-
 class MainWindow : public QMainWindow {
     Q_OBJECT
+
+public:
 
 public:
     MainWindow(QWidget *parent = nullptr);
@@ -32,9 +32,9 @@ private slots:
     void togglePlayPause();
     void updateFrame();
     void seekVideo(int value);
-    void toggleVisuals(int state);
-    void onVideoToggle(int state);
-    void onVTKToggle(int state);
+    void toggleVisuals(bool checked);
+    void onVideoToggle(bool checked);
+    void onVTKToggle(bool checked);
     void showSettings();
 
 private:
@@ -68,13 +68,11 @@ private:
     PanoViewer pano_viewer;
     
     std::vector<Sort::Track> tracks;
-    float localizer_confidence = 0;
-    bool yolo_update = false;
     
     // Config
     const int GLOBAL_FRAME_WIDTH = 2880;
     const int GLOBAL_FRAME_HEIGHT = 1440;
-    float localizer_threshold = 0.5f;
+
     int panorama_offset = 0;
     
     // Gaze Analysis

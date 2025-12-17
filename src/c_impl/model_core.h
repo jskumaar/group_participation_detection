@@ -8,7 +8,6 @@
 #include <opencv2/imgproc.hpp> 
 #include <opencv2/dnn.hpp>
 
-
 float sigmoid(float x);
 
 class Localizer

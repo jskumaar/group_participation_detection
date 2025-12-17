@@ -1,6 +1,7 @@
 #include "SORT.h"
 #include <set>
 #include <limits>
+#include <iostream>
 #include "360_image_process.h"
 
 #define M_PI 3.14159265358979323846
@@ -17,7 +18,16 @@ double Sort::getIOU(const cv::Rect2f& bb_test, const cv::Rect2f& bb_gt) {
     return static_cast<double>(in / un);
 }
 
-std::vector<Sort::Track> Sort::update(const std::vector<cv::Rect>& detections, int rows, int cols) {
+static float wrapX(float x, int width)
+{
+    x = std::fmod(x, width);
+    if (x < 0) x += width;
+    return x;
+}
+
+std::vector<PanoViewer::gaze> Sort::update(const std::vector<PanoViewer::gaze>& detections) {
+    std::vector<PanoViewer::gaze> result_gazes;
+    result_gazes.reserve(detections.size());
 
     // Early exit if no trackers and no detections
     if (trackers_.empty() && detections.empty()) {
@@ -28,27 +38,33 @@ std::vector<Sort::Track> Sort::update(const std::vector<cv::Rect>& detections, i
     std::vector<cv::Rect2f> predictedBoxes;
     for (auto it = trackers_.begin(); it != trackers_.end();) {
         cv::Rect2f pBox = it->predict();
-        if (pBox.width > 0 && pBox.height > 0 && pBox.x >= 0 && pBox.y >= 0) {
-            predictedBoxes.push_back(pBox);
-            ++it;
-        } else {
+        if (pBox.width <= 0 || pBox.height <= 0) {
             it = trackers_.erase(it);
+            continue;
         }
+
+        // Check for NaN in prediction
+        if (std::isnan(pBox.x) || std::isnan(pBox.y) || std::isnan(pBox.width) || std::isnan(pBox.height)) {
+             std::cerr << "Warning: Tracker predicted NaN. Removing." << std::endl;
+             it = trackers_.erase(it);
+             continue;
+        }
+        
+        predictedBoxes.push_back(pBox);
+        ++it;
     }
 
     unsigned trackNum = predictedBoxes.size();
     unsigned detNum = detections.size();
 
-    // 2. Create IOU cost matrix only if we have trackers and detections
+    // 2. Create IOU cost matrix
     std::vector<std::vector<double>> iouMatrix;
-    
     iouMatrix.resize(trackNum, std::vector<double>(detNum, 0));
     for (unsigned i = 0; i < trackNum; i++) {
         for (unsigned j = 0; j < detNum; j++) {
-            iouMatrix[i][j] = 1 - getIOU(predictedBoxes[i], detections[j]);
+            iouMatrix[i][j] = 1 - getIOU(predictedBoxes[i], detections[j].box);
         }
     }
-
 
     // 3. Solve assignment
     std::vector<int> assignment(trackNum, -1);
@@ -62,16 +78,13 @@ std::vector<Sort::Track> Sort::update(const std::vector<cv::Rect>& detections, i
     std::set<int> unmatchedTrajectories;
     std::vector<cv::Point> matchedPairs;
 
-    // All detections unmatched if no trackers
     if (trackNum == 0) {
         for (unsigned j = 0; j < detNum; ++j) unmatchedDetections.insert(j);
     }
-    // All trackers unmatched if no detections
     if (detNum == 0) {
         for (unsigned i = 0; i < trackNum; ++i) unmatchedTrajectories.insert(i);
     }
 
-    // Handle normal case
     if (trackNum > 0 && detNum > 0) {
         // Unmatched detections
         if (detNum > trackNum) {
@@ -83,9 +96,8 @@ std::vector<Sort::Track> Sort::update(const std::vector<cv::Rect>& detections, i
                                 matchedItems.begin(), matchedItems.end(),
                                 std::inserter(unmatchedDetections, unmatchedDetections.begin()));
         }
-        // Unmatched trackers
         else if (detNum < trackNum) {
-            for (unsigned i = 0; i < trackNum; ++i)
+             for (unsigned i = 0; i < trackNum; ++i)
                 if (assignment[i] == -1) unmatchedTrajectories.insert(i);
         }
 
@@ -101,39 +113,28 @@ std::vector<Sort::Track> Sort::update(const std::vector<cv::Rect>& detections, i
         }
     }
 
-    // 5. Update matched trackers safely
+    // 5. Update matched trackers and assign IDs
     for (auto& match : matchedPairs) {
-        if (match.x < trackers_.size() && match.y < detections.size()) {
-            trackers_[match.x].update(detections[match.y]);
-        } else {
-            std::cerr << "Warning: invalid match indices: "
-                      << match.x << ", " << match.y << std::endl;
-        }
+        trackers_[match.x].update(detections[match.y].box);
+        
+        PanoViewer::gaze g = detections[match.y];
+        g.personID = trackers_[match.x].m_id + 1; // 1-based ID
+        result_gazes.push_back(g);
     }
 
-    // 6. Create new trackers for unmatched detections
+    // 6. Create new trackers for unmatched detections and assign IDs
     for (int idx : unmatchedDetections) {
-        if (idx < detections.size()) {
-            cv::Rect det = detections[idx];
-            if (det.width > 0 && det.height > 0) {
-                KalmanTracker tracker(det);
-                trackers_.push_back(tracker);
-            } else {
-                std::cerr << "Skipping invalid detection: " << det << std::endl;
-            }
-        }
+        cv::Rect det = detections[idx].box;
+        KalmanTracker tracker(det);
+        trackers_.push_back(tracker);
+        
+        PanoViewer::gaze g = detections[idx];
+        g.personID = tracker.m_id + 1;
+        result_gazes.push_back(g);
     }
 
-    // 7. Collect results and remove dead trackers
-    std::vector<Track> result;
+    // 7. Remove dead trackers
     for (auto it = trackers_.begin(); it != trackers_.end();) {
-        if ((it->m_time_since_update < 1) &&
-            (it->m_hit_streak >= min_hits_ || frame_count_ <= min_hits_)) {
-            Track t;
-            t.id = it->m_id + 1;
-            t.box = it->get_state();
-            result.push_back(t);
-        }
         if (it->m_time_since_update > max_age_) {
             it = trackers_.erase(it);
         } else {
@@ -141,37 +142,44 @@ std::vector<Sort::Track> Sort::update(const std::vector<cv::Rect>& detections, i
         }
     }
 
-	//8. find virtual cam parameters for each track
-    for (Track& track : result) {
-        cv::Rect person = track.box;
+    
+    return result_gazes;
+}
+
+std::vector<Sort::Track> Sort::inject(std::vector<cv::Rect> detections, int rows, int cols) {
+    std::vector<Track> result;
+    for (const auto& det : detections) {
+        Track t;
+        t.viewer = std::make_shared<PanoViewer>();
+        
+        // Compute virtual cam parameters directly from the detection rect
         // 1) compute yaw from bbox center x (panorama -> longitude)
-        float center_x = person.x + person.width * 0.5f;
+        float center_x = det.x + det.width * 0.5f;
         double lambda = (center_x / (double)cols) * 2.0 * M_PI - M_PI;
         float yaw_deg = static_cast<float>(lambda * 180.0 / M_PI);
 
         // 2) compute phi (latitude) of the bbox TOP pixel in panorama
-        double top_v = static_cast<double>(person.y); // top row of bbox in pano pixels
+        double top_v = static_cast<double>(det.y); // top row of bbox in pano pixels
         double phi_top = (0.5 - (top_v / (double)rows)) * M_PI; // radians
-        PanoViewer* viewer = new PanoViewer();
-        // 3) compute desired vertical FOV (deg) � reuse your helper (already clamps)
-        int h_star = static_cast<int>(viewer->getOutputHeight() * 0.13f); // e.g., head ~20% of input height
-        float theta_deg = viewer->computeFOVForPersonBox(person, rows, h_star);
+        
+        // 3) compute desired vertical FOV (deg)
+        int h_star = static_cast<int>(t.viewer->getOutputHeight() * 0.13f); // e.g., head ~13% of input height
+        float theta_deg = t.viewer->computeFOVForPersonBox(det, rows, h_star);
         double theta_rad = theta_deg * M_PI / 180.0;
 
-        // 4) set pitch so that the top row (y=0) of perspective maps to phi_top:
-        //    at center column, phi_at_top_row = -theta/2  => pitch = phi_top - phi_at_top_row = phi_top + theta/2
+        // 4) set pitch
         double pitch_rad = phi_top - 0.3 * theta_rad;
         float pitch_deg = static_cast<float>(pitch_rad * 180.0 / M_PI);
-		track.viewer = viewer;
-		track.viewer->setYaw(yaw_deg);
-		track.viewer->setPitch(-pitch_deg);
-		track.viewer->setFOV(theta_deg);
+        
+        t.viewer->setYaw(yaw_deg);
+        t.viewer->setPitch(pitch_deg);
+        t.viewer->setFOV(theta_deg);
+
+        result.push_back(t);
     }
-
-    
-
     return result;
 }
+
 
 
 

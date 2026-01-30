@@ -56,6 +56,7 @@ private:
     QTimer *timer;
     QElapsedTimer fpsTimer;
     int frameCount = 0;
+    int yoloFrameCount = 0;
     cv::VideoCapture cap;
     bool isPlaying = false;
     long totalFrames = 0;
@@ -68,6 +69,7 @@ private:
     PanoViewer pano_viewer;
     
     std::vector<Sort::Track> tracks;
+    std::vector<cv::Rect> lastYoloDetections;
     
     // Config
     const int GLOBAL_FRAME_WIDTH = 2880;

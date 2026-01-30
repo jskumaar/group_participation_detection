@@ -40,10 +40,11 @@ void VideoWidget::paintEvent(QPaintEvent *event) {
         float scaleY = (float)height() / m_currentImage.height();
 
         // Draw Bounding Boxes
-        painter.setPen(QPen(Qt::green, 2));
         painter.setFont(QFont("Arial", 12, QFont::Bold));
         
         for (const auto& person : m_people) {
+            painter.setPen(QPen(person.color, 2));
+
             QRect qRect(
                 person.box.x * scaleX, 
                 person.box.y * scaleY, 
@@ -63,9 +64,6 @@ void VideoWidget::paintEvent(QPaintEvent *event) {
             
             painter.setPen(Qt::white);
             painter.drawText(qRect.left() + 2, qRect.top() - 4, idText);
-            
-            // Reset pen for next box
-            painter.setPen(QPen(Qt::green, 2));
         }
     }
 }

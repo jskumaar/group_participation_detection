@@ -230,6 +230,10 @@ std::optional<Pose> OPNetTracker::run(cv::Mat frame, int fov){
 std::optional<Pose> OPNetTracker::detect(){
 
     auto [p, rect] = localizer_->run(grayscale);
+    cv::Mat temp = grayscale.clone();
+    cv::rectangle(temp, rect, cv::Scalar(255, 0, 0), 2);
+    cv::imshow("gray", temp);
+    cv::waitKey(1000);
     if(p< config_.localizer_threshold){
         needs_yolo_update = true;
         return std::nullopt;

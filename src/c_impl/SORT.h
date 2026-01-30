@@ -23,7 +23,7 @@ public:
     // Process detections for one frame and return current active tracks
     // viewer is forward-declared; include 360_image_process.h in SORT.cpp where implementation needs it
     std::vector<PanoViewer::gaze> update(const std::vector<PanoViewer::gaze>& detections);
-    std::vector<Track> inject(std::vector<cv::Rect> detections, int rows, int cols);
+    std::vector<Track> inject(std::vector<cv::Rect> detections, int rows, int cols, float head_height_ratio = 0.13f);
 
 private:
     double getIOU(const cv::Rect2f& bb_test, const cv::Rect2f& bb_gt);

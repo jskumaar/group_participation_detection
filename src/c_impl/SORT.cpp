@@ -146,7 +146,7 @@ std::vector<PanoViewer::gaze> Sort::update(const std::vector<PanoViewer::gaze>& 
     return result_gazes;
 }
 
-std::vector<Sort::Track> Sort::inject(std::vector<cv::Rect> detections, int rows, int cols) {
+std::vector<Sort::Track> Sort::inject(std::vector<cv::Rect> detections, int rows, int cols, float head_height_ratio) {
     std::vector<Track> result;
     for (const auto& det : detections) {
         Track t;
@@ -163,7 +163,7 @@ std::vector<Sort::Track> Sort::inject(std::vector<cv::Rect> detections, int rows
         double phi_top = (0.5 - (top_v / (double)rows)) * M_PI; // radians
         
         // 3) compute desired vertical FOV (deg)
-        int h_star = static_cast<int>(t.viewer->getOutputHeight() * 0.13f); // e.g., head ~13% of input height
+        int h_star = static_cast<int>(t.viewer->getOutputHeight() * head_height_ratio); // e.g., head ~13% of input height
         float theta_deg = t.viewer->computeFOVForPersonBox(det, rows, h_star);
         double theta_rad = theta_deg * M_PI / 180.0;
 

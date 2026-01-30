@@ -180,6 +180,7 @@ void MainWindow::updateFrame() {
 
     // FPS Calculation
     frameCount++;
+    yoloFrameCount++;
     if (fpsTimer.elapsed() > 1000) {
         // qDebug() << "FPS:" << frameCount;
         fpsLabel->setText(QString("FPS: %1").arg(frameCount));
@@ -223,11 +224,12 @@ void MainWindow::processFrame(cv::Mat& pano_frame) {
     // Tracking Logic (Adapted from main.cpp)
     std::vector<VideoWidget::PersonBox> currentPeople;
     std::vector<cv::Rect> people;
-
-    bool interval_check = (frameCount % tracker.getConfig().yolo_check_interval == 0);
+    bool interval_check = (yoloFrameCount % tracker.getConfig().yolo_check_interval == 0);
+    yoloFrameCount = interval_check ? 0 : yoloFrameCount;
     if (tracker.need_yolo_update() || (tracks.size() < num_people && interval_check)) {
         people = tracker.run_yolo(pano_frame);
-        tracks = object_tracker.inject(people, pano_frame.rows, pano_frame.cols);
+        lastYoloDetections = people;
+        tracks = object_tracker.inject(people, pano_frame.rows, pano_frame.cols, tracker.getConfig().head_height_ratio);
         printf("yolo updated\n");
         tracker.yolo_updated();
     }
@@ -272,7 +274,10 @@ void MainWindow::processFrame(cv::Mat& pano_frame) {
     // Update Visuals
     if (showVideo) {
         for(const auto& g : gazes){
-            currentPeople.push_back({g.box, g.personID});
+            currentPeople.push_back({g.box, g.personID, Qt::green});
+        }
+        for(const auto& r : lastYoloDetections){
+            currentPeople.push_back({r, -1, Qt::red});
         }
         videoWidget->updateOverlays(currentPeople);
         videoWidget->updateFrame(pano_frame);
@@ -393,6 +398,12 @@ void MainWindow::showSettings() {
     offsetBox->setValue(panorama_offset);
     form.addRow("Panorama Offset (px):", offsetBox);
 
+    QDoubleSpinBox *headRatioBox = new QDoubleSpinBox(&dialog);
+    headRatioBox->setRange(0.01, 1.0);
+    headRatioBox->setSingleStep(0.01);
+    headRatioBox->setValue(config.head_height_ratio);
+    form.addRow("Head Height Ratio:", headRatioBox);
+
     QDialogButtonBox buttonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
     form.addRow(&buttonBox);
     connect(&buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
@@ -412,6 +423,7 @@ void MainWindow::showSettings() {
         config.eye_boost_steepness = steepnessBox->value();
         config.eye_boost_max = maxBoostBox->value();
         config.yolo_check_interval = yoloIntervalBox->value();
+        config.head_height_ratio = headRatioBox->value();
         
         tracker.setConfig(config);
         

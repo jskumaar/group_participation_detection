@@ -14,6 +14,7 @@ public:
     struct PersonBox {
         cv::Rect box;
         int id;
+        QColor color = Qt::green;
     };
 
     explicit VideoWidget(QWidget *parent = nullptr);

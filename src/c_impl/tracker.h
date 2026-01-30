@@ -50,6 +50,7 @@ struct TrackerConfig {
     float eye_boost_max = 0.7f;
     
     int yolo_check_interval = 30;
+    float head_height_ratio = 0.13f;
 };
 
 

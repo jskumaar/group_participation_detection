@@ -36,10 +36,13 @@ private slots:
     void onVideoToggle(bool checked);
     void onVTKToggle(bool checked);
     void showSettings();
+    void onBoxClicked(int index);
 
 private:
     void setupUI();
     void processFrame(cv::Mat& frame);
+    std::pair<std::vector<cv::Rect>, std::vector<cv::Rect>> updateValidDetections(const std::vector<cv::Rect>& newDetections, const std::vector<cv::Rect>& previousValid);
+    void updateSelectionVisuals();
 
     // UI Components
     VideoWidget *videoWidget;
@@ -51,6 +54,7 @@ private:
     QLabel *statusLabel;
     QLabel *fpsLabel;
     QLabel *yoloLabel;
+    QLabel *gazeInfoLabel;
 
     // Logic
     QTimer *timer;
@@ -70,6 +74,9 @@ private:
     
     std::vector<Sort::Track> tracks;
     std::vector<cv::Rect> lastYoloDetections;
+    std::vector<cv::Rect> validYoloDetections; // The "ground truth" valid boxes to overlap with
+    std::vector<bool> selectionMask; // For initial selection
+    bool isSelecting = false;
     
     // Config
     const int GLOBAL_FRAME_WIDTH = 2880;
@@ -80,8 +87,6 @@ private:
     // Gaze Analysis
     std::ofstream csv_file;
     float eyeBoost(float yaw_deg);
-
-    int num_people = 3;
     
     GazeVisualizer *gazeVisualizer;
 };

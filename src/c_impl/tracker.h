@@ -51,6 +51,7 @@ struct TrackerConfig {
     
     int yolo_check_interval = 30;
     float head_height_ratio = 0.13f;
+    float yolorerun_threshold = 0.5f;
 };
 
 

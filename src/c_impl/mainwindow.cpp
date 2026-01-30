@@ -14,17 +14,11 @@
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setupUI();
     
-    // Initialize Tracking Objects
-    // Note: Constructors for tracker/object_tracker/pano_viewer called implicitly or match default
-    
     timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, &MainWindow::updateFrame);
 
-    // Start FPS timer
     fpsTimer.start();
 
-
-    // Open CSV for logging    
     csv_file.open("gaze_analysis.csv");
     if (csv_file.is_open()) {
         csv_file << "Frame,PersonID,BoxCenterX,BoxCenterY,GazeStartX,GazeStartY,GazeStartZ,GazeDirX,GazeDirY,GazeDirZ,LookingAtIDs\n";
@@ -41,19 +35,24 @@ void MainWindow::setupUI() {
     setCentralWidget(centralWidget);
     QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
 
-    // Content Area (Video + 3D Graph)
     QHBoxLayout *contentLayout = new QHBoxLayout();
     mainLayout->addLayout(contentLayout, 1);
 
-    // Video Area
     videoWidget = new VideoWidget(this);
     videoWidget->setMinimumSize(800, 400); // 2:1 Aspect Ratio
+    connect(videoWidget, &VideoWidget::boxClicked, this, &MainWindow::onBoxClicked);
     contentLayout->addWidget(videoWidget, 2);
 
     // 3D Visualizer
     gazeVisualizer = new GazeVisualizer(this);
     gazeVisualizer->setMinimumWidth(300);
     contentLayout->addWidget(gazeVisualizer, 1);
+
+    // Gaze Info Label
+    gazeInfoLabel = new QLabel("Interactions: None", this);
+    gazeInfoLabel->setAlignment(Qt::AlignCenter);
+    gazeInfoLabel->setStyleSheet("font-size: 14px; font-weight: bold; color: yellow;");
+    mainLayout->addWidget(gazeInfoLabel);
 
     // Controls
     QHBoxLayout *controlsLayout = new QHBoxLayout();
@@ -126,17 +125,58 @@ void MainWindow::openVideo() {
     timeSlider->setRange(0, totalFrames);
     timeSlider->setEnabled(true);
     playButton->setEnabled(true);
-    
-    isPlaying = true;
-    playButton->setText("Pause");
-    timer->start(33); // ~30 FPS
-    
-    statusLabel->setText(QString("Loaded: %1").arg(fileName));
+
+    // Initial Frame for Selection
+    cv::Mat firstFrame;
+    cap >> firstFrame;
+    if (!firstFrame.empty()) {
+        
+        isSelecting = true;
+        validYoloDetections.clear(); 
+        
+        processFrame(firstFrame); 
+        
+        selectionMask.resize(lastYoloDetections.size(), false); 
+        updateSelectionVisuals();
+        
+        statusLabel->setText(QString("Loaded: %1. Please select people to track.").arg(fileName));
+        playButton->setText("Start Tracking");
+    } else {
+        statusLabel->setText("Failed to load first frame.");
+    }
 }
 
 void MainWindow::togglePlayPause() {
     if (!cap.isOpened()) return;
     
+    if (isSelecting) {
+        validYoloDetections.clear();
+        for (size_t i = 0; i < lastYoloDetections.size(); ++i) {
+            if (i < selectionMask.size() && selectionMask[i]) {
+                validYoloDetections.push_back(lastYoloDetections[i]);
+            }
+        }
+        
+        if (validYoloDetections.size() < tracker.getConfig().num_people) {
+            QString msg = QString("Please select at least %1 people (Selected: %2).")
+                          .arg(tracker.getConfig().num_people)
+                          .arg(validYoloDetections.size());
+            QMessageBox::warning(this, "Insufficient Selection", msg);
+            return;
+        }
+
+        object_tracker.setNumPeople(tracker.getConfig().num_people);
+        tracks = object_tracker.inject(validYoloDetections, GLOBAL_FRAME_HEIGHT, GLOBAL_FRAME_WIDTH, tracker.getConfig().head_height_ratio);
+        lastYoloDetections = validYoloDetections; 
+        
+        isSelecting = false;
+        isPlaying = true;
+        timer->start(33);
+        playButton->setText("Pause");
+        statusLabel->setText("Tracking Started");
+        return;
+    }
+
     isPlaying = !isPlaying;
     if (isPlaying) {
         timer->start(33);
@@ -159,9 +199,6 @@ void MainWindow::seekVideo(int value) {
 void MainWindow::updateFrame() {
     if (!cap.isOpened()) return;
     
-    // If playing, standard grab. If seeking (paused), we might just read once.
-    // Logic here assumes playing or single-shot update
-    
     cv::Mat pano_frame;
     cap >> pano_frame;
     
@@ -173,23 +210,19 @@ void MainWindow::updateFrame() {
         return;
     }
     
-    // Update Slider UI
     long currentFrame = (long)cap.get(cv::CAP_PROP_POS_FRAMES);
-    QSignalBlocker blocker(timeSlider); // Prevent seek loop
+    QSignalBlocker blocker(timeSlider); 
     timeSlider->setValue(currentFrame);
 
-    // FPS Calculation
     frameCount++;
     yoloFrameCount++;
     if (fpsTimer.elapsed() > 1000) {
-        // qDebug() << "FPS:" << frameCount;
         fpsLabel->setText(QString("FPS: %1").arg(frameCount));
         frameCount = 0;
         fpsTimer.restart();
     }
 
     processFrame(pano_frame);
-    // videoWidget->updateFrame(pano_frame); // Moved to processFrame to respect toggle
 }
 
 void MainWindow::processFrame(cv::Mat& pano_frame) {
@@ -198,21 +231,13 @@ void MainWindow::processFrame(cv::Mat& pano_frame) {
          return;
     }
 
-    // Apply Circular Shift if offset is set
     if (panorama_offset != 0) {
         int w = pano_frame.cols;
         int h = pano_frame.rows;
         int shift = panorama_offset % w;
-        if (shift < 0) shift += w; // Handle negative
+        if (shift < 0) shift += w; 
         
         if (shift != 0) {
-            // Split and concatenate
-            // Left part becomes right part of new image, Right part becomes left part.
-            // Wait, shifting right by 'shift':
-            // New image starts with the last 'shift' pixels (which wrap around from right)
-            // Followed by the rest.
-            
-            // Use a temporary buffer to avoid in-place writing over source data
             cv::Mat result;
             cv::Mat left_part = pano_frame(cv::Rect(w - shift, 0, shift, h));
             cv::Mat right_part = pano_frame(cv::Rect(0, 0, w - shift, h));
@@ -221,24 +246,58 @@ void MainWindow::processFrame(cv::Mat& pano_frame) {
         }
     }
     
-    // Tracking Logic (Adapted from main.cpp)
     std::vector<VideoWidget::PersonBox> currentPeople;
     std::vector<cv::Rect> people;
-    bool interval_check = (yoloFrameCount % tracker.getConfig().yolo_check_interval == 0);
+    bool interval_check = (yoloFrameCount % (int)tracker.getConfig().yolo_check_interval == 0);
     yoloFrameCount = interval_check ? 0 : yoloFrameCount;
-    if (tracker.need_yolo_update() || (tracks.size() < num_people && interval_check)) {
-        people = tracker.run_yolo(pano_frame);
+    if (tracker.need_yolo_update() || tracks.empty() || (tracks.size() < tracker.getConfig().num_people && interval_check)) {
+        std::vector<cv::Rect> raw_people = tracker.run_yolo(pano_frame);
+        
+        if (!validYoloDetections.empty() && !isSelecting) {
+            auto [injected, nextValid] = updateValidDetections(raw_people, validYoloDetections);
+            
+            if (injected.size() < tracker.getConfig().num_people && raw_people.size() >= tracker.getConfig().num_people) {
+                isSelecting = true;
+                isPlaying = false;
+                timer->stop();
+                playButton->setText("Resume Tracking");
+                statusLabel->setText("Tracking Lost: Please re-select people.");
+                
+                lastYoloDetections = raw_people; 
+                selectionMask.assign(raw_people.size(), false);
+                
+                for (size_t i = 0; i < raw_people.size(); ++i) {
+                    for (const auto& f : injected) {
+                        if (raw_people[i] == f) { 
+                            selectionMask[i] = true;
+                            break;
+                        }
+                    }
+                }
+                
+                updateSelectionVisuals();
+                videoWidget->updateFrame(pano_frame); 
+                return; 
+            }
+            
+            people = injected;
+            validYoloDetections = nextValid; 
+        } else {
+            people = raw_people;
+        }
+        
         lastYoloDetections = people;
-        tracks = object_tracker.inject(people, pano_frame.rows, pano_frame.cols, tracker.getConfig().head_height_ratio);
-        printf("yolo updated\n");
-        tracker.yolo_updated();
+        
+        if (!isSelecting) {
+            tracks = object_tracker.inject(people, pano_frame.rows, pano_frame.cols, tracker.getConfig().head_height_ratio);
+            printf("yolo updated\n");
+            tracker.yolo_updated();
+        }
     }
 
     cv::Mat perspective_view;
     std::vector<PanoViewer::gaze> gazes;
     
-    // Clear old data points if too many
-    // For simplicity, we just append. In a real app, we'd scroll/cull.
     for (const auto& track : tracks) {
          
          perspective_view = track.viewer->generatePerspectiveView(pano_frame);
@@ -252,19 +311,37 @@ void MainWindow::processFrame(cv::Mat& pano_frame) {
                                                   track.viewer->getPitch(), 
                                                   track.viewer->getFOV(), 
                                                   pose->yaw * yaw_boost, 
-                                                  -pose->pitch, 
+                                                  pose->pitch, 
                                                   cv::Vec3f(pose->x, pose->y, pose->z));
         g.box = track.viewer->convertPerspectiveRectToEquirectangular(pose->rect, pano_frame.cols, pano_frame.rows);
         gazes.emplace_back(g);
         perspective_view.release();
     }
 
-    gazes = object_tracker.update(gazes);
-    // Save to CSV if playing
-    if (isPlaying) {
+    if (!isSelecting) {
+        gazes = object_tracker.update(gazes);
+    }
+    // Save to CSV if playing and not selecting
+    if (isPlaying && !isSelecting) {
          pano_viewer.saveGazeAnalysis(csv_file, (long)cap.get(cv::CAP_PROP_POS_FRAMES), gazes);
          csv_file.flush(); 
     }
+
+    // Update Gaze Info Label
+    QString interactionText = "Interactions: ";
+    bool foundInteraction = false;
+    for (size_t i = 0; i < gazes.size(); ++i) {
+        for (size_t j = 0; j < gazes.size(); ++j) {
+            if (i == j) continue;
+            if (pano_viewer.isLookingAt(gazes[i], gazes[j].start, tracker.getConfig().max_angle_deg)) {
+                if (foundInteraction) interactionText += " | ";
+                interactionText += QString("Person %1 -> Person %2").arg(gazes[i].personID).arg(gazes[j].personID);
+                foundInteraction = true;
+            }
+        }
+    }
+    if (!foundInteraction) interactionText += "None";
+    gazeInfoLabel->setText(interactionText);
 
     // Update 3D Visualizer
     if (showVTK) {
@@ -273,13 +350,17 @@ void MainWindow::processFrame(cv::Mat& pano_frame) {
     
     // Update Visuals
     if (showVideo) {
-        for(const auto& g : gazes){
-            currentPeople.push_back({g.box, g.personID, Qt::green});
+        if (isSelecting) {
+             videoWidget->updateOverlays(currentPeople); 
+        } else {
+             for(const auto& g : gazes){
+                 currentPeople.push_back({g.box, g.personID, Qt::green});
+             }
+             for(const auto& r : lastYoloDetections){
+                 currentPeople.push_back({r, -1, Qt::red});
+             }
+             videoWidget->updateOverlays(currentPeople);
         }
-        for(const auto& r : lastYoloDetections){
-            currentPeople.push_back({r, -1, Qt::red});
-        }
-        videoWidget->updateOverlays(currentPeople);
         videoWidget->updateFrame(pano_frame);
     }
 
@@ -398,6 +479,12 @@ void MainWindow::showSettings() {
     offsetBox->setValue(panorama_offset);
     form.addRow("Panorama Offset (px):", offsetBox);
 
+    QDoubleSpinBox *rerunThreshBox = new QDoubleSpinBox(&dialog);
+    rerunThreshBox->setRange(0.01, 1.0);
+    rerunThreshBox->setSingleStep(0.05);
+    rerunThreshBox->setValue(config.yolorerun_threshold);
+    form.addRow("YOLO Rerun IoU Threshold:", rerunThreshBox);
+
     QDoubleSpinBox *headRatioBox = new QDoubleSpinBox(&dialog);
     headRatioBox->setRange(0.01, 1.0);
     headRatioBox->setSingleStep(0.01);
@@ -424,15 +511,75 @@ void MainWindow::showSettings() {
         config.eye_boost_max = maxBoostBox->value();
         config.yolo_check_interval = yoloIntervalBox->value();
         config.head_height_ratio = headRatioBox->value();
+        config.yolorerun_threshold = rerunThreshBox->value();
         
         tracker.setConfig(config);
         
         // Update Objects
         object_tracker.setIOUThreshold(config.iou_threshold);
+        object_tracker.setNumPeople(config.num_people);
         KalmanTracker::decay_velocity_factor = config.velocity_decay;
-        this->num_people = config.num_people;
         pano_viewer.setMaxAngle(config.max_angle_deg);
         
         panorama_offset = offsetBox->value();
     }
+}
+
+void MainWindow::onBoxClicked(int index) {
+    if (!isSelecting) return;
+    if (index >= 0 && index < selectionMask.size()) {
+        selectionMask[index] = !selectionMask[index];
+        updateSelectionVisuals();
+    }
+}
+
+void MainWindow::updateSelectionVisuals() {
+    std::vector<VideoWidget::PersonBox> overlays;
+    for (size_t i = 0; i < lastYoloDetections.size(); ++i) {
+        Qt::GlobalColor color = (i < selectionMask.size() && selectionMask[i]) ? Qt::green : Qt::red;
+        overlays.push_back({lastYoloDetections[i], (int)i, color});
+    }
+    videoWidget->updateOverlays(overlays);
+}
+
+// Returns {injected detections (subset of new), updated valid set (full size)}
+std::pair<std::vector<cv::Rect>, std::vector<cv::Rect>> MainWindow::updateValidDetections(const std::vector<cv::Rect>& newDetections, const std::vector<cv::Rect>& previousValid) {
+    std::vector<cv::Rect> injected;
+    std::vector<cv::Rect> nextValid = previousValid; // Start with old valid set (stale)
+    
+    // We want to match new detections to our 'slots' in previousValid
+    // Simple greedy matching by best IoU
+    std::vector<bool> usedNew(newDetections.size(), false);
+    float threshold = tracker.getConfig().yolorerun_threshold;
+
+    for (size_t i = 0; i < nextValid.size(); ++i) {
+        int bestIdx = -1;
+        float bestIoU = -1.0f;
+
+        for (size_t j = 0; j < newDetections.size(); ++j) {
+            if (usedNew[j]) continue;
+            
+            cv::Rect intersect = nextValid[i] & newDetections[j];
+            float intersectArea = intersect.area();
+            float unionArea = nextValid[i].area() + newDetections[j].area() - intersectArea;
+            
+            if (unionArea > 0) {
+                float iou = intersectArea / unionArea;
+                if (iou > threshold && iou > bestIoU) {
+                    bestIoU = iou;
+                    bestIdx = j;
+                }
+            }
+        }
+
+        if (bestIdx != -1) {
+            // Found a match: update valid slot and add to injected
+            nextValid[i] = newDetections[bestIdx];
+            injected.push_back(newDetections[bestIdx]);
+            usedNew[bestIdx] = true;
+        }
+        // Else: nextValid[i] remains the old box (stale)
+    }
+    
+    return {injected, nextValid};
 }

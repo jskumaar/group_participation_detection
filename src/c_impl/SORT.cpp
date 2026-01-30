@@ -133,15 +133,75 @@ std::vector<PanoViewer::gaze> Sort::update(const std::vector<PanoViewer::gaze>& 
         result_gazes.push_back(g);
     }
 
-    // 7. Remove dead trackers
+    // 7. Remove dead trackers and clean up reassign map
     for (auto it = trackers_.begin(); it != trackers_.end();) {
         if (it->m_time_since_update > max_age_) {
+            reassign_map_.erase(it->m_id + 1); // remove internal ID from map
             it = trackers_.erase(it);
         } else {
             ++it;
         }
     }
 
+    // 8. Reassign IDs if needed
+    if (expected_num_people_ > 0) {
+        std::set<int> active_display_ids;
+        std::vector<PanoViewer::gaze*> need_reassignment;
+        
+        // Phase 1: Lock in native valid IDs (Priority 1)
+        for (auto& gaze : result_gazes) {
+            if (gaze.personID <= expected_num_people_) {
+                active_display_ids.insert(gaze.personID);
+            }
+        }
+
+        // Phase 2: Validate existing mappings and identify unmapped overflows
+        // Note: Iterate again to handle the high IDs
+        for (auto& gaze : result_gazes) {
+             if (gaze.personID <= expected_num_people_) continue; // Already processed in Phase 1
+
+             int internal_id = gaze.personID;
+             
+             if (reassign_map_.count(internal_id)) {
+                 int mapped_id = reassign_map_[internal_id];
+                 // Check collision with native IDs or previously accepted mappings
+                 if (active_display_ids.count(mapped_id)) {
+                     // Collision! Native ID returned or slot taken. Discard mapping.
+                     reassign_map_.erase(internal_id);
+                     need_reassignment.push_back(&gaze);
+                 } else {
+                     // Safe to keep mapping
+                     gaze.personID = mapped_id;
+                     active_display_ids.insert(mapped_id);
+                 }
+             } else {
+                 // New overflow
+                 need_reassignment.push_back(&gaze);
+             }
+        }
+
+        // Phase 3: Assign missing IDs to unmapped items
+        for (auto* gaze : need_reassignment) {
+            int internal_id = gaze->personID;
+            int assigned_id = -1;
+            
+            // Find first missing ID
+            for (int i = 1; i <= expected_num_people_; ++i) {
+                if (active_display_ids.find(i) == active_display_ids.end()) {
+                    assigned_id = i;
+                    break;
+                }
+            }
+            
+            if (assigned_id != -1) {
+                reassign_map_[internal_id] = assigned_id;
+                gaze->personID = assigned_id;
+                active_display_ids.insert(assigned_id);
+            } else {
+                // No gaps available. Leave as overflow ID.
+            }
+        }
+    }
     
     return result_gazes;
 }

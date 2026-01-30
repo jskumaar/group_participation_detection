@@ -25,6 +25,8 @@ public:
     std::vector<PanoViewer::gaze> update(const std::vector<PanoViewer::gaze>& detections);
     std::vector<Track> inject(std::vector<cv::Rect> detections, int rows, int cols, float head_height_ratio = 0.13f);
 
+    void setNumPeople(int n) { expected_num_people_ = n; }
+
 private:
     double getIOU(const cv::Rect2f& bb_test, const cv::Rect2f& bb_gt);
 
@@ -33,6 +35,9 @@ private:
     int max_age_;
     int min_hits_;
     double iou_threshold_;
+
+    int expected_num_people_ = 0;
+    std::map<int, int> reassign_map_; // Maps internal_id -> display_id
 };
 
 

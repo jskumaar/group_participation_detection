@@ -1,5 +1,6 @@
 #include "videowidget.h"
 #include <QDebug>
+#include <QMouseEvent>
 
 VideoWidget::VideoWidget(QWidget *parent) : QWidget(parent) {
     setAttribute(Qt::WA_OpaquePaintEvent); // Optimize painting
@@ -66,6 +67,34 @@ void VideoWidget::paintEvent(QPaintEvent *event) {
             painter.drawText(qRect.left() + 2, qRect.top() - 4, idText);
         }
     }
+}
+
+void VideoWidget::mousePressEvent(QMouseEvent *event) {
+    if (!m_showVisuals || m_people.empty() || m_currentImage.isNull()) {
+        QWidget::mousePressEvent(event);
+        return;
+    }
+
+    float scaleX = (float)width() / m_currentImage.width();
+    float scaleY = (float)height() / m_currentImage.height();
+
+    // Iterate in reverse to catch top-most box first (though overlap is possible)
+    for (int i = 0; i < m_people.size(); ++i) {
+        const auto& person = m_people[i];
+        QRect qRect(
+            person.box.x * scaleX, 
+            person.box.y * scaleY, 
+            person.box.width * scaleX, 
+            person.box.height * scaleY
+        );
+
+        if (qRect.contains(event->pos())) {
+            emit boxClicked(i);
+            return; // Only select one at a time for simplicity
+        }
+    }
+    
+    QWidget::mousePressEvent(event);
 }
 
 QImage VideoWidget::matToQImage(const cv::Mat& mat) {

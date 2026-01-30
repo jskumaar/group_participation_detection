@@ -22,8 +22,12 @@ public:
     void updateOverlays(const std::vector<PersonBox>& people);
     void setShowVisuals(bool show);
 
+signals:
+    void boxClicked(int index);
+
 protected:
     void paintEvent(QPaintEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
 
 private:
     QImage m_currentImage;

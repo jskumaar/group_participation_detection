@@ -1,3 +1,3 @@
-[submodule "src/c_impl/src/c_impl/sort-cpp"]
-	path = src/c_impl/src/c_impl/sort-cpp
+[submodule "src/c_impl/sort-cpp"]
+	path = src/c_impl/sort-cpp
 	url = https://github.com/mcximing/sort-cpp

@@ -1,31 +1,31 @@
 #pragma once
+
 #include <vector>
 #include <set>
+#include <map>
+
 #include <opencv2/opencv.hpp>
-#include "sort-cpp/sort-c++/Hungarian.h"
-#include "sort-cpp/sort-c++/KalmanTracker.h"
 
-#include "360_image_process.h"
+#include "third_party/sort-cpp/sort-c++/Hungarian.h"
+#include "third_party/sort-cpp/sort-c++/KalmanTracker.h"
 
-// SORT output. a track object with bbox and id
+#include "vision/360_image_process.h"
 
 class Sort {
 public:
     struct Track {
-    std::shared_ptr<PanoViewer> viewer = nullptr;
+        std::shared_ptr<PanoViewer> viewer = nullptr;
     };
 
     Sort(int max_age = 1000, int min_hits = 3, double iou_threshold = 0.15);
-    //^ default contructor
 
     void setIOUThreshold(double threshold) { iou_threshold_ = threshold; }
 
-    // Process detections for one frame and return current active tracks
-    // viewer is forward-declared; include 360_image_process.h in SORT.cpp where implementation needs it
     std::vector<PanoViewer::gaze> update(const std::vector<PanoViewer::gaze>& detections);
     std::vector<Track> inject(std::vector<cv::Rect> detections, int rows, int cols, float head_height_ratio = 0.13f);
 
     void setNumPeople(int n) { expected_num_people_ = n; }
+    void resetTrackerVelocities();
 
 private:
     double getIOU(const cv::Rect2f& bb_test, const cv::Rect2f& bb_gt);
@@ -37,8 +37,6 @@ private:
     double iou_threshold_;
 
     int expected_num_people_ = 0;
-    std::map<int, int> reassign_map_; // Maps internal_id -> display_id
+    std::map<int, int> reassign_map_;
 };
-
-
 

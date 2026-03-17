@@ -1,5 +1,4 @@
-#include "model_core.h"
-
+#include "vision/model_core.h"
 
 cv::Rect2f unnormalize(const cv::Rect2f &r, int h, int w)
 {
@@ -75,7 +74,6 @@ void normalize_brightness(const cv::Mat& frame, cv::Mat& out)
     frame.convertTo(out, CV_32F, alpha, beta);
 }
 
-
 std::string PoseEstimator::get_network_input_name(size_t i) const
 {
 #if ORT_API_VERSION >= 12
@@ -99,16 +97,12 @@ Localizer::Localizer(Ort::MemoryInfo &allocator_info, Ort::Session &&session) :
     scaled_frame_(INPUT_IMG_HEIGHT, INPUT_IMG_WIDTH, CV_8U),
     input_mat_(INPUT_IMG_HEIGHT, INPUT_IMG_WIDTH, CV_32F)
 {
-    // Only works when input_mat does not reallocated memory ...which it should not.
-    // Non-owning memory reference to input_mat?
-    // Note: shape = (bach x channels x h x w)
     const std::int64_t input_shape[4] = { 1, 1, INPUT_IMG_HEIGHT, INPUT_IMG_WIDTH };
     input_val_ = Ort::Value::CreateTensor<float>(allocator_info, input_mat_.ptr<float>(0), input_mat_.total(), input_shape, 4);
 
     const std::int64_t output_shape[2] = { 1, 5 };
     output_val_ = Ort::Value::CreateTensor<float>(allocator_info, results_.data(), results_.size(), output_shape, 2);
 }
-
 
 std::pair<float, cv::Rect2f> Localizer::run(
     const cv::Mat &frame)
@@ -128,8 +122,8 @@ std::pair<float, cv::Rect2f> Localizer::run(
     const cv::Rect2f roi = unnormalize(cv::Rect2f{
         results_[1],
         results_[2],
-        results_[3]-results_[1], // Width
-        results_[4]-results_[2] // Height
+        results_[3]-results_[1],
+        results_[4]-results_[2]
     }, frame.rows, frame.cols);
     const float score = sigmoid(results_[0]);
 
@@ -138,21 +132,18 @@ std::pair<float, cv::Rect2f> Localizer::run(
 
 cv::Quatf image_to_world(cv::Quatf q);
 
-// Returns width and height of the input tensor, or throws.
-// Expects the model to take one tensor as input that must
-// have the shape B x C x H x W, where B=C=1.
 cv::Size get_input_image_shape(const Ort::Session &session)
 {
     if (session.GetInputCount() < 1)
         throw std::invalid_argument("Model must take at least one input tensor");
-    const std::vector<std::int64_t> shape = 
+    const std::vector<std::int64_t> shape =
         session.GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape();
     if (shape.size() != 4)
         throw std::invalid_argument("Model takes the input tensor in the wrong shape");
     return { static_cast<int>(shape[3]), static_cast<int>(shape[2]) };
 }
 
-PoseEstimator::PoseEstimator(Ort::MemoryInfo &allocator_info, Ort::Session &&session) 
+PoseEstimator::PoseEstimator(Ort::MemoryInfo &allocator_info, Ort::Session &&session)
     : model_version_{session.GetModelMetadata().GetVersion()}
     , session_{std::move(session)}
     , allocator_{session_, allocator_info}
@@ -162,14 +153,6 @@ PoseEstimator::PoseEstimator(Ort::MemoryInfo &allocator_info, Ort::Session &&ses
     if (session_.GetOutputCount() < 2)
         throw std::runtime_error("Invalid Model: must have at least two outputs");
 
-    // WARNING: Messy model compatibility issues!
-    // When reading the initial model release, it did not have the version field set.
-    // Reading it here will result in some unspecified value. It's probably UB due to
-    // reading uninitialized memory. But there is little choice.
-    // Now, detection of this old version is messy ... we have to guess based on the 
-    // number we get. Getting an uninitialized value matching a valid version is unlikely.
-    // But the real problem is that this line must be updated whenever we want to bump the
-    // version number!!
     if (model_version_ <= 0 || model_version_ > 4)
         model_version_ = 1;
 
@@ -189,22 +172,21 @@ PoseEstimator::PoseEstimator(Ort::MemoryInfo &allocator_info, Ort::Session &&ses
         std::vector<int64_t> shape;
         float* buffer = nullptr;
         size_t element_count = 0;
+        bool element_count_is_opencv_rows = false;
         bool available = false;
     };
 
     std::unordered_map<std::string, TensorSpec> understood_outputs = {
-        { "pos_size", TensorSpec{ { 1, 3 }, &output_coord_[0], output_coord_.rows } },
-        { "quat", TensorSpec{ { 1, 4},  &output_quat_[0], output_quat_.rows } },
-        { "box", TensorSpec{ { 1, 4}, &output_box_[0], output_box_.rows } },
+        { "pos_size", TensorSpec{ { 1, 3 }, &output_coord_[0], (size_t)output_coord_.rows } },
+        { "quat", TensorSpec{ { 1, 4},  &output_quat_[0], (size_t)output_quat_.rows } },
+        { "box", TensorSpec{ { 1, 4}, &output_box_[0], (size_t)output_box_.rows } },
         { "rotaxis_scales_tril", TensorSpec{ {1, 3, 3}, output_rotaxis_scales_tril_.val, 9 }},
-        { "rotaxis_std", TensorSpec{ {1, 3, 3}, output_rotaxis_scales_tril_.val, 9 }}, // TODO: Delete when old models aren't used any more
-        { "pos_size_std", TensorSpec{ {1, 3}, output_coord_scales_std_.val, output_coord_scales_std_.rows}},
-        { "pos_size_scales", TensorSpec{ {1, 3}, output_coord_scales_std_.val, output_coord_scales_std_.rows}},
+        { "rotaxis_std", TensorSpec{ {1, 3, 3}, output_rotaxis_scales_tril_.val, 9 }},
+        { "pos_size_std", TensorSpec{ {1, 3}, output_coord_scales_std_.val, (size_t)output_coord_scales_std_.rows}},
+        { "pos_size_scales", TensorSpec{ {1, 3}, output_coord_scales_std_.val, (size_t)output_coord_scales_std_.rows}},
         { "pos_size_scales_tril", TensorSpec{ {1, 3, 3}, output_coord_scales_tril_.val, 9}}
     };
 
-    std::cout << "Pose model inputs (" << session_.GetInputCount() << ")";
-    std::cout << "Pose model outputs (" << session_.GetOutputCount() << "):";
     output_names_.resize(session_.GetOutputCount());
     output_c_names_.resize(session_.GetOutputCount());
     for (size_t i=0; i<session_.GetOutputCount(); ++i)
@@ -214,13 +196,10 @@ PoseEstimator::PoseEstimator(Ort::MemoryInfo &allocator_info, Ort::Session &&ses
         const auto& onnx_tensor_spec = output_info.GetTensorTypeAndShapeInfo();
         auto my_tensor_spec_it = understood_outputs.find(name);
 
-        std::cout << "\t" << name.c_str() << " (" << onnx_tensor_spec.GetShape() << ") dtype: " <<  onnx_tensor_spec.GetElementType() << " " <<
-            (my_tensor_spec_it != understood_outputs.end() ? "ok" : "unknown");
-
         if (my_tensor_spec_it != understood_outputs.end())
         {
             TensorSpec& t = my_tensor_spec_it->second;
-            if (onnx_tensor_spec.GetShape() != t.shape || 
+            if (onnx_tensor_spec.GetShape() != t.shape ||
                 onnx_tensor_spec.GetElementType() != Ort::TypeToTensorType<float>::type)
                 throw std::runtime_error("Invalid output tensor spec for "s + name);
             output_val_.push_back(Ort::Value::CreateTensor<float>(
@@ -229,7 +208,6 @@ PoseEstimator::PoseEstimator(Ort::MemoryInfo &allocator_info, Ort::Session &&ses
         }
         else
         {
-            // Create tensor regardless and ignore output
             output_val_.push_back(create_tensor(output_info, allocator_));
         }
         output_names_[i] = name;
@@ -258,7 +236,6 @@ PoseEstimator::PoseEstimator(Ort::MemoryInfo &allocator_info, Ort::Session &&ses
 std::optional<PoseEstimator::Face> PoseEstimator::run(
     const cv::Mat &frame, const cv::Rect &box)
 {
-
     cv::Mat cropped;
 
     const int patch_size = std::max(box.width, box.height)*1.05;
@@ -268,8 +245,6 @@ std::optional<PoseEstimator::Face> PoseEstimator::run(
     };
     cv::getRectSubPix(frame, {patch_size, patch_size}, patch_center, cropped);
 
-    // Will get failure if patch_center is outside image boundaries settings.
-    // Have to catch this case.
     if (cropped.rows != patch_size || cropped.cols != patch_size)
         return {};
 
@@ -282,14 +257,13 @@ std::optional<PoseEstimator::Face> PoseEstimator::run(
     assert (input_mat_.ptr(0) == p);
     assert (!input_mat_.empty() && input_mat_.isContinuous());
 
-
     try
     {
         session_.Run(
-            Ort::RunOptions{ nullptr }, 
+            Ort::RunOptions{ nullptr },
             input_c_names_.data(),
-            input_val_.data(), 
-            input_val_.size(), 
+            input_val_.data(),
+            input_val_.size(),
             output_c_names_.data(),
             output_val_.data(),
             output_val_.size());
@@ -299,10 +273,6 @@ std::optional<PoseEstimator::Face> PoseEstimator::run(
         std::cout << "Failed to run the model: " << e.what();
         return {};
     }
-
-    // Perform coordinate transformation.
-    // From patch-local normalized in [-1,1] to
-    // frame unnormalized pixel.
 
     cv::Matx33f center_size_cov_tril = {};
     if (has_uncertainty_)
@@ -320,19 +290,16 @@ std::optional<PoseEstimator::Face> PoseEstimator::run(
         center_size_cov_tril *= patch_size*0.5f;
     }
 
-    const cv::Point2f center = patch_center + 
+    const cv::Point2f center = patch_center +
         (0.5f*patch_size)*cv::Point2f{output_coord_[0], output_coord_[1]};
     const float size = patch_size*0.5f*output_coord_[2];
 
-    // Following Eigen which uses quat components in the order w, x, y, z.
-    // As does OpenCV
-    cv::Quatf rotation = { 
-        output_quat_[3], 
-        output_quat_[0], 
-        output_quat_[1], 
+    cv::Quatf rotation = {
+        output_quat_[3],
+        output_quat_[0],
+        output_quat_[1],
         output_quat_[2] };
 
-    // Should be lower triangular. If not maybe something is wrong with memory layout ... or the model.
     assert(output_rotaxis_scales_tril_(0, 1) == 0);
     assert(output_rotaxis_scales_tril_(0, 2) == 0);
     assert(output_rotaxis_scales_tril_(1, 2) == 0);
@@ -341,10 +308,9 @@ std::optional<PoseEstimator::Face> PoseEstimator::run(
     assert(center_size_cov_tril(1, 2) == 0);
 
     cv::Matx33f rotaxis_scales_tril = output_rotaxis_scales_tril_;
-    
+
     if (model_version_ < 2)
     {
-        // Due to a change in coordinate conventions
         rotation = image_to_world(rotation);
     }
 
@@ -373,19 +339,19 @@ void Reframer::extract_detections(std::vector<Reframer::DetectedPeople>& oResult
         cv::minMaxLoc(scores, 0, &maxClassScore, 0, &class_id);
         if (maxClassScore > rectConfidenceThreshold && class_id.x == 0)
         {
-            confidences.push_back(maxClassScore);
+            confidences.push_back((float)maxClassScore);
             float x = data[0];
             float y = data[1];
             float w = data[2];
             float h = data[3];
             int left = int(x - 0.5 * w);
             int top = int(y - 0.5 * h);
-            boxes.push_back(cv::Rect(left, top, w, h));
+            boxes.push_back(cv::Rect(left, top, (int)w, (int)h));
         }
         data += mOutputDims[1];
     }
     cv::dnn::NMSBoxes(boxes, confidences, rectConfidenceThreshold, iouThreshold, nmsResult);
-    for (int i = 0; i < nmsResult.size(); ++i)
+    for (int i = 0; i < (int)nmsResult.size(); ++i)
     {
         int idx = nmsResult[i];
         Reframer::DetectedPeople result;
@@ -398,8 +364,6 @@ void Reframer::extract_detections(std::vector<Reframer::DetectedPeople>& oResult
     nmsResult.clear();
 }
 
-
-
 Reframer::Reframer(Ort::MemoryInfo &allocator_info,
                    Ort::Session &&session, float confidence, float iou)
     : session_(std::move(session))
@@ -410,8 +374,8 @@ Reframer::Reframer(Ort::MemoryInfo &allocator_info,
     iouThreshold = iou;
     Ort::AllocatorWithDefaultOptions allocator;
     Ort::AllocatedStringPtr input_name = session_.GetInputNameAllocated(0, allocator);
-    input_node_name_ = std::string(input_name.get()); 
-    inputNodeNames[0] = input_node_name_.c_str(); 
+    input_node_name_ = std::string(input_name.get());
+    inputNodeNames[0] = input_node_name_.c_str();
     inputNodeDims = { 1, 3, INPUT_IMG_HEIGHT, INPUT_IMG_WIDTH };
 
     Ort::AllocatedStringPtr output_name = session_.GetOutputNameAllocated(0, allocator);
@@ -419,30 +383,28 @@ Reframer::Reframer(Ort::MemoryInfo &allocator_info,
     outputNodeNames[0] = output_node_name_.c_str();
     mOutputDims = session_.GetOutputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape();
 
-    output_mat_ = cv::Mat(mOutputDims[1], mOutputDims[2], CV_32F);
+    output_mat_ = cv::Mat((int)mOutputDims[1], (int)mOutputDims[2], CV_32F);
 
-
-    input_val_ = Ort::Value::CreateTensor<float>(allocator_info, input_mat_.ptr<float>(), 
+    input_val_ = Ort::Value::CreateTensor<float>(allocator_info, input_mat_.ptr<float>(),
         input_mat_.total(), inputNodeDims.data(), inputNodeDims.size());
-    output_val_ = Ort::Value::CreateTensor<float>(allocator_info, output_mat_.ptr<float>(0), 
+    output_val_ = Ort::Value::CreateTensor<float>(allocator_info, output_mat_.ptr<float>(0),
         output_mat_.total(), mOutputDims.data(), mOutputDims.size());
-
 }
 
 std::vector<Reframer::DetectedPeople> Reframer::run(const cv::Mat &frame)
 {
     auto p = input_mat_.ptr(0);
-    // Make sure input_mat_ is exactly the right size and type before creating the tensor
     cv::Mat temp_blob;
     cv::dnn::blobFromImage(frame, temp_blob, 1/255.0, cv::Size(INPUT_IMG_WIDTH, INPUT_IMG_HEIGHT), cv::Scalar(), false, false);
-    temp_blob.copyTo(input_mat_);  // Copy into pre-allocated Mat
+    temp_blob.copyTo(input_mat_);
     assert (input_mat_.ptr(0) == p);
     p = output_mat_.ptr(0);
-    session_.Run(Ort::RunOptions{nullptr}, 
-        inputNodeNames, &input_val_, 1, 
+    session_.Run(Ort::RunOptions{nullptr},
+        inputNodeNames, &input_val_, 1,
         outputNodeNames, &output_val_, 1);
     assert (output_mat_.ptr(0) == p);
     std::vector<Reframer::DetectedPeople> detectedPeople;
     extract_detections(detectedPeople);
     return detectedPeople;
 }
+

@@ -5,6 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 
+if(MSVC)
+  # Avoid MSVC "cannot open program database" (C1041) under parallel builds.
+  add_compile_options(/FS)
+endif()
+
 # ONNX Runtime - use the correct include path
 include_directories(
   ${CMAKE_SOURCE_DIR}/onnx/include
@@ -30,22 +35,29 @@ find_package(VTK REQUIRED)
 
 # Sources
 set(SOURCES
-    model_core.cpp
-    tracker.cpp
-    SORT.cpp
-    360_image_process.cpp
+    vision/model_core.cpp
+    vision/opnet_tracker.cpp
+    vision/sort_tracker.cpp
+    vision/360_image_process.cpp
     #model_test.cpp
-    main.cpp
-    mainwindow.cpp
-    videowidget.cpp
-    gazevisualizer.cpp
-    gazevisualizer.h
-    ${CMAKE_SOURCE_DIR}/sort-cpp/sort-c++/KalmanTracker.cpp
-    ${CMAKE_SOURCE_DIR}/sort-cpp/sort-c++/Hungarian.cpp
+    app/main.cpp
+    app/app_controller.cpp
+    app/mainwindow.cpp
+    app/videowidget.cpp
+    app/gazevisualizer.cpp
+    media/video_source.cpp
+    io/csv_gaze_writer.cpp
+    pipelines/vision_pipeline.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/sort-cpp/sort-c++/KalmanTracker.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/sort-cpp/sort-c++/Hungarian.cpp
 )
 
 # Executable
 add_executable(${PROJECT_NAME} ${SOURCES})
+
+target_include_directories(${PROJECT_NAME} PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
 
 # Include directories - add the onnxruntime subdirectory
 target_link_libraries(${PROJECT_NAME}

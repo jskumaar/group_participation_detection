@@ -5,8 +5,10 @@
 #include <QImage>
 #include <QPainter>
 #include <vector>
+
 #include <opencv2/opencv.hpp>
-#include "360_image_process.h" // For PanoViewer::gaze
+
+#include "vision/360_image_process.h"
 
 class VideoWidget : public QWidget {
     Q_OBJECT
@@ -38,3 +40,4 @@ private:
 };
 
 #endif // VIDEOWIDGET_H
+

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 #include <opencv2/opencv.hpp>
@@ -22,6 +23,7 @@ public:
 
     long totalFrames() const;
     long currentFrame() const;                // OpenCV's current frame index
+    std::uint64_t currentTimestampNs() const; // OpenCV's current position in nanoseconds
 
 private:
     cv::VideoCapture cap_;

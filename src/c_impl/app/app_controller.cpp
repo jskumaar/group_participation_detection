@@ -1,6 +1,33 @@
 #include "app/app_controller.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <cmath>
+
+#include "io/pipeline_publisher_factory.h"
+
+namespace {
+
+std::uint64_t toNs(std::chrono::steady_clock::duration duration) {
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count());
+}
+
+float angleBetweenDeg(const cv::Vec3f& gazeDirection, const cv::Point3f& origin, const cv::Point3f& target) {
+    cv::Vec3f toTarget(target.x - origin.x, target.y - origin.y, target.z - origin.z);
+    const float gazeNorm = std::sqrt(gazeDirection.dot(gazeDirection));
+    const float targetNorm = std::sqrt(toTarget.dot(toTarget));
+    if (gazeNorm <= 1e-6f || targetNorm <= 1e-6f) {
+        return 180.0f;
+    }
+
+    float cosine = gazeDirection.dot(toTarget) / (gazeNorm * targetNorm);
+    cosine = std::max(-1.0f, std::min(1.0f, cosine));
+    return std::acos(cosine) * (180.0f / 3.14159265359f);
+}
+
+} // namespace
 
 AppController::AppController(QObject* parent)
     : QObject(parent) {
@@ -12,6 +39,9 @@ AppController::AppController(QObject* parent)
 
     csvWriter_.open("gaze_analysis.csv");
     vision_.setConfig(vision_.getConfig());
+    sessionStartTs_ = std::chrono::steady_clock::now();
+    pipelinePublisher_ = io::createPipelinePublisherFromEnv();
+    pipelinePublisher_->start();
 
     emit statusTextChanged("Ready");
     emit fpsTextChanged("FPS: 0");
@@ -22,6 +52,9 @@ AppController::AppController(QObject* parent)
 AppController::~AppController() {
     tickTimer_.stop();
     videoSource_.close();
+    if (pipelinePublisher_) {
+        pipelinePublisher_->stop();
+    }
     csvWriter_.close();
 }
 
@@ -140,6 +173,10 @@ void AppController::onTick() {
 
     long currentFrame = videoSource_.currentFrame();
     emit sliderValueChanged(currentFrame);
+    emit playbackPositionChanged(
+        currentFrame,
+        totalFrames_,
+        static_cast<qint64>(videoSource_.currentTimestampNs()));
 
     frameCount_++;
     if (fpsTimer_.elapsed() > 1000) {
@@ -192,7 +229,9 @@ void AppController::updateSelectionOverlays() {
 }
 
 void AppController::processTrackingFrame(const cv::Mat& frame) {
+    const auto sourceTs = std::chrono::steady_clock::now();
     auto result = vision_.processFrame(frame, justSeeked_, /*enableTracking*/true);
+    const auto processedTs = std::chrono::steady_clock::now();
     if (justSeeked_) justSeeked_ = false;
 
     if (result.requestSelection) {
@@ -214,13 +253,23 @@ void AppController::processTrackingFrame(const cv::Mat& frame) {
         csvWriter_.flush();
     }
 
-    // Interaction label
+    // Interaction label + publish payload:
+    // include all directed non-self pairs and set is_looking by threshold.
     QString interactionText = "Interactions: ";
     bool found = false;
+    std::vector<io::InteractionPair> interactions;
     for (size_t i = 0; i < result.gazes.size(); ++i) {
         for (size_t j = 0; j < result.gazes.size(); ++j) {
             if (i == j) continue;
-            if (vision_.panoViewer().isLookingAt(result.gazes[i], result.gazes[j].start, vision_.getConfig().max_angle_deg)) {
+            const float angle = angleBetweenDeg(result.gazes[i].direction, result.gazes[i].start, result.gazes[j].start);
+            const bool isLooking = angle <= vision_.getConfig().max_angle_deg;
+            interactions.push_back(io::InteractionPair{
+                result.gazes[i].personID,
+                result.gazes[j].personID,
+                angle,
+                isLooking
+            });
+            if (isLooking) {
                 if (found) interactionText += " | ";
                 interactionText += QString("Person %1 -> Person %2").arg(result.gazes[i].personID).arg(result.gazes[j].personID);
                 found = true;
@@ -238,6 +287,15 @@ void AppController::processTrackingFrame(const cv::Mat& frame) {
     for (const auto& g : result.gazes) overlays.push_back({g.box, g.personID, Qt::green});
     for (const auto& r : result.yoloDetections) overlays.push_back({r, -1, Qt::red});
     emit overlaysReady(overlays);
+
+    if (pipelinePublisher_) {
+        io::PipelineFrameContext publishContext;
+        publishContext.frame_index = static_cast<std::uint64_t>(videoSource_.currentFrame());
+        publishContext.source_timestamp_ns = videoSource_.currentTimestampNs();
+        publishContext.processed_timestamp_ns = toNs(processedTs - sessionStartTs_);
+        publishContext.interactions = std::move(interactions);
+        pipelinePublisher_->publish(result, publishContext);
+    }
 
     if (showVTK_) emit gazesReady(result.gazes);
     if (showVideo_) emit frameReady(frame);

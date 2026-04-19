@@ -12,6 +12,64 @@
 #include <QDoubleSpinBox>
 #include <QSpinBox>
 #include <QDialogButtonBox>
+#include <QPushButton>
+#include <QSettings>
+#include <QCoreApplication>
+#include <QDir>
+
+namespace {
+
+QString defaultsIniPath() {
+    return QDir(QCoreApplication::applicationDirPath()).filePath("tracker_settings.ini");
+}
+
+QSettings openDefaultsStore() {
+    return QSettings(defaultsIniPath(), QSettings::IniFormat);
+}
+
+void saveDefaults(const TrackerConfig& cfg, int panoramaOffsetPx) {
+    QSettings s = openDefaultsStore();
+    s.beginGroup("tracker");
+    s.setValue("nms_threshold", cfg.nms_threshold);
+    s.setValue("confidence_threshold", cfg.confidence_threshold);
+    s.setValue("localizer_threshold", cfg.localizer_threshold);
+    s.setValue("iou_threshold", cfg.iou_threshold);
+    s.setValue("num_people", cfg.num_people);
+    s.setValue("max_angle_deg", cfg.max_angle_deg);
+    s.setValue("eye_boost_knee", cfg.eye_boost_knee);
+    s.setValue("eye_boost_steepness", cfg.eye_boost_steepness);
+    s.setValue("eye_boost_max", cfg.eye_boost_max);
+    s.setValue("yolo_check_interval", cfg.yolo_check_interval);
+    s.setValue("head_height_ratio", cfg.head_height_ratio);
+    s.setValue("yolorerun_threshold", cfg.yolorerun_threshold);
+    s.setValue("panorama_offset_px", panoramaOffsetPx);
+    s.endGroup();
+    s.sync();
+}
+
+bool loadDefaultsInto(TrackerConfig& cfg, int& panoramaOffsetPx) {
+    const QString path = defaultsIniPath();
+    if (!QFile::exists(path)) return false;
+    QSettings s(path, QSettings::IniFormat);
+    s.beginGroup("tracker");
+    cfg.nms_threshold = s.value("nms_threshold", cfg.nms_threshold).toFloat();
+    cfg.confidence_threshold = s.value("confidence_threshold", cfg.confidence_threshold).toFloat();
+    cfg.localizer_threshold = s.value("localizer_threshold", cfg.localizer_threshold).toFloat();
+    cfg.iou_threshold = s.value("iou_threshold", cfg.iou_threshold).toFloat();
+    cfg.num_people = s.value("num_people", cfg.num_people).toInt();
+    cfg.max_angle_deg = s.value("max_angle_deg", cfg.max_angle_deg).toFloat();
+    cfg.eye_boost_knee = s.value("eye_boost_knee", cfg.eye_boost_knee).toFloat();
+    cfg.eye_boost_steepness = s.value("eye_boost_steepness", cfg.eye_boost_steepness).toFloat();
+    cfg.eye_boost_max = s.value("eye_boost_max", cfg.eye_boost_max).toFloat();
+    cfg.yolo_check_interval = s.value("yolo_check_interval", cfg.yolo_check_interval).toInt();
+    cfg.head_height_ratio = s.value("head_height_ratio", cfg.head_height_ratio).toFloat();
+    cfg.yolorerun_threshold = s.value("yolorerun_threshold", cfg.yolorerun_threshold).toFloat();
+    panoramaOffsetPx = s.value("panorama_offset_px", panoramaOffsetPx).toInt();
+    s.endGroup();
+    return true;
+}
+
+} // namespace
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setupUI();
@@ -43,6 +101,30 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         timeSlider->setValue((int)value);
     });
 
+    connect(controller_, &AppController::playbackPositionChanged, this,
+        [this](long currentFrame, long totalFrames, qint64 timestampNs){
+            const double seconds = static_cast<double>(timestampNs) / 1e9;
+            const int totalMs = static_cast<int>(seconds * 1000.0 + 0.5);
+            const int hours = totalMs / 3600000;
+            const int minutes = (totalMs / 60000) % 60;
+            const int secs = (totalMs / 1000) % 60;
+            const int millis = totalMs % 1000;
+            QString timeText = (hours > 0)
+                ? QString("%1:%2:%3.%4")
+                    .arg(hours)
+                    .arg(minutes, 2, 10, QChar('0'))
+                    .arg(secs, 2, 10, QChar('0'))
+                    .arg(millis, 3, 10, QChar('0'))
+                : QString("%1:%2.%3")
+                    .arg(minutes, 2, 10, QChar('0'))
+                    .arg(secs, 2, 10, QChar('0'))
+                    .arg(millis, 3, 10, QChar('0'));
+            positionLabel->setText(QString("Frame: %1 / %2  |  Time: %3")
+                .arg(currentFrame)
+                .arg(totalFrames)
+                .arg(timeText));
+        });
+
     connect(controller_, &AppController::frameReady, this, [this](const cv::Mat& frame){
         if (showVideo) videoWidget->updateFrame(frame);
     });
@@ -55,6 +137,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     controller_->setShowVideo(showVideo);
     controller_->setShowVTK(showVTK);
+
+    {
+        TrackerConfig savedConfig = controller_->getTrackerConfig();
+        int savedOffset = controller_->panoramaOffsetPx();
+        if (loadDefaultsInto(savedConfig, savedOffset)) {
+            controller_->applyTrackerConfig(savedConfig);
+            controller_->setPanoramaOffsetPx(savedOffset);
+        }
+    }
 }
 
 MainWindow::~MainWindow() {
@@ -124,6 +215,9 @@ void MainWindow::setupUI() {
     statusLabel = new QLabel("Ready", this);
     statusBar()->addWidget(statusLabel);
 
+    positionLabel = new QLabel("Frame: 0 / 0  |  Time: 00:00.000", this);
+    statusBar()->addPermanentWidget(positionLabel);
+
     fpsLabel = new QLabel("FPS: 0", this);
     statusBar()->addPermanentWidget(fpsLabel);
 
@@ -162,11 +256,6 @@ void MainWindow::showSettings() {
 
     TrackerConfig config = controller_->getTrackerConfig();
 
-    QDoubleSpinBox *headSizeBox = new QDoubleSpinBox(&dialog);
-    headSizeBox->setRange(100, 500);
-    headSizeBox->setValue(config.head_size_mm);
-    form.addRow("Head Size (mm):", headSizeBox);
-
     QDoubleSpinBox *nmsBox = new QDoubleSpinBox(&dialog);
     nmsBox->setRange(0, 1);
     nmsBox->setSingleStep(0.01);
@@ -185,12 +274,6 @@ void MainWindow::showSettings() {
     locBox->setValue(config.localizer_threshold);
     form.addRow("Localizer Threshold:", locBox);
 
-    QDoubleSpinBox *decayBox = new QDoubleSpinBox(&dialog);
-    decayBox->setRange(0, 1);
-    decayBox->setSingleStep(0.05);
-    decayBox->setValue(config.velocity_decay);
-    form.addRow("Velocity Decay:", decayBox);
-
     QDoubleSpinBox *iouBox = new QDoubleSpinBox(&dialog);
     iouBox->setRange(0, 1);
     iouBox->setSingleStep(0.01);
@@ -204,25 +287,26 @@ void MainWindow::showSettings() {
 
     QDoubleSpinBox *maxAngleBox = new QDoubleSpinBox(&dialog);
     maxAngleBox->setRange(1, 180);
+    maxAngleBox->setSingleStep(0.5);
     maxAngleBox->setValue(config.max_angle_deg);
-    form.addRow("Max Angle (deg):", maxAngleBox);
+    form.addRow("Looking Angle Threshold (deg):", maxAngleBox);
 
     QDoubleSpinBox *kneeBox = new QDoubleSpinBox(&dialog);
     kneeBox->setRange(0, 50);
     kneeBox->setValue(config.eye_boost_knee);
-    form.addRow("Eye Boost Knee:", kneeBox);
+    form.addRow("Eye Boost Peak Yaw (deg):", kneeBox);
 
     QDoubleSpinBox *steepnessBox = new QDoubleSpinBox(&dialog);
-    steepnessBox->setRange(0, 1);
+    steepnessBox->setRange(0, 5);
     steepnessBox->setSingleStep(0.01);
     steepnessBox->setValue(config.eye_boost_steepness);
-    form.addRow("Eye Boost Steepness:", steepnessBox);
+    form.addRow("Eye Boost Narrowness:", steepnessBox);
 
     QDoubleSpinBox *maxBoostBox = new QDoubleSpinBox(&dialog);
     maxBoostBox->setRange(0, 5);
     maxBoostBox->setSingleStep(0.1);
     maxBoostBox->setValue(config.eye_boost_max);
-    form.addRow("Eye Boost Max:", maxBoostBox);
+    form.addRow("Eye Boost Peak Gain:", maxBoostBox);
 
     QSpinBox *yoloIntervalBox = new QSpinBox(&dialog);
     yoloIntervalBox->setRange(1, 100);
@@ -248,26 +332,40 @@ void MainWindow::showSettings() {
     form.addRow("Head Height Ratio:", headRatioBox);
 
     QDialogButtonBox buttonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal, &dialog);
+    QPushButton *setDefaultBtn = buttonBox.addButton("Set as Default", QDialogButtonBox::ActionRole);
     form.addRow(&buttonBox);
     connect(&buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(&buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
-    if (dialog.exec() == QDialog::Accepted) {
-        config.head_size_mm = headSizeBox->value();
-        config.nms_threshold = nmsBox->value();
-        config.confidence_threshold = confBox->value();
-        config.localizer_threshold = locBox->value();
-        config.velocity_decay = decayBox->value();
-        config.iou_threshold = iouBox->value();
-        config.num_people = numPeopleBox->value();
-        config.max_angle_deg = maxAngleBox->value();
-        config.eye_boost_knee = kneeBox->value();
-        config.eye_boost_steepness = steepnessBox->value();
-        config.eye_boost_max = maxBoostBox->value();
-        config.yolo_check_interval = yoloIntervalBox->value();
-        config.head_height_ratio = headRatioBox->value();
-        config.yolorerun_threshold = rerunThreshBox->value();
+    auto collectConfig = [&]() {
+        TrackerConfig cfg = config;
+        cfg.nms_threshold = nmsBox->value();
+        cfg.confidence_threshold = confBox->value();
+        cfg.localizer_threshold = locBox->value();
+        cfg.iou_threshold = iouBox->value();
+        cfg.num_people = numPeopleBox->value();
+        cfg.max_angle_deg = maxAngleBox->value();
+        cfg.eye_boost_knee = kneeBox->value();
+        cfg.eye_boost_steepness = steepnessBox->value();
+        cfg.eye_boost_max = maxBoostBox->value();
+        cfg.yolo_check_interval = yoloIntervalBox->value();
+        cfg.head_height_ratio = headRatioBox->value();
+        cfg.yolorerun_threshold = rerunThreshBox->value();
+        return cfg;
+    };
 
+    connect(setDefaultBtn, &QPushButton::clicked, &dialog, [&]() {
+        TrackerConfig cfg = collectConfig();
+        int offset = offsetBox->value();
+        controller_->applyTrackerConfig(cfg);
+        controller_->setPanoramaOffsetPx(offset);
+        saveDefaults(cfg, offset);
+        QMessageBox::information(&dialog, "Settings",
+            QString("Saved as default to:\n%1").arg(defaultsIniPath()));
+    });
+
+    if (dialog.exec() == QDialog::Accepted) {
+        config = collectConfig();
         controller_->applyTrackerConfig(config);
         controller_->setPanoramaOffsetPx(offsetBox->value());
     }

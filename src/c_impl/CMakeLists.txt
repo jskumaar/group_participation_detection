@@ -4,6 +4,7 @@ project(tracker)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
+option(ENABLE_RAPPORT_GRPC "Enable gRPC producer bridge to Python analyzer" OFF)
 
 if(MSVC)
   # Avoid MSVC "cannot open program database" (C1041) under parallel builds.
@@ -33,6 +34,39 @@ find_package(Qt6 COMPONENTS Widgets REQUIRED)
 set(VTK_DIR "C:/VTK/install/lib/cmake/vtk-9.5")
 find_package(VTK REQUIRED)
 
+if(ENABLE_RAPPORT_GRPC)
+  find_package(protobuf CONFIG REQUIRED)
+  find_package(gRPC CONFIG REQUIRED)
+
+  set(RAPPORT_PROTO_FILE ${CMAKE_CURRENT_SOURCE_DIR}/proto/rapport.proto)
+  set(RAPPORT_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+  file(MAKE_DIRECTORY ${RAPPORT_GENERATED_DIR})
+
+  set(RAPPORT_PROTO_CC ${RAPPORT_GENERATED_DIR}/rapport.pb.cc)
+  set(RAPPORT_PROTO_H ${RAPPORT_GENERATED_DIR}/rapport.pb.h)
+  set(RAPPORT_GRPC_CC ${RAPPORT_GENERATED_DIR}/rapport.grpc.pb.cc)
+  set(RAPPORT_GRPC_H ${RAPPORT_GENERATED_DIR}/rapport.grpc.pb.h)
+
+  add_custom_command(
+    OUTPUT ${RAPPORT_PROTO_CC} ${RAPPORT_PROTO_H} ${RAPPORT_GRPC_CC} ${RAPPORT_GRPC_H}
+    COMMAND $<TARGET_FILE:protobuf::protoc>
+    ARGS
+      --proto_path=${CMAKE_CURRENT_SOURCE_DIR}/proto
+      --cpp_out=${RAPPORT_GENERATED_DIR}
+      --grpc_out=${RAPPORT_GENERATED_DIR}
+      --plugin=protoc-gen-grpc=$<TARGET_FILE:gRPC::grpc_cpp_plugin>
+      ${RAPPORT_PROTO_FILE}
+    DEPENDS ${RAPPORT_PROTO_FILE}
+    COMMENT "Generating C++ protobuf/gRPC sources for rapport.proto"
+    VERBATIM
+  )
+
+  set(RAPPORT_GENERATED_SRCS
+    ${RAPPORT_PROTO_CC}
+    ${RAPPORT_GRPC_CC}
+  )
+endif()
+
 # Sources
 set(SOURCES
     vision/model_core.cpp
@@ -47,17 +81,35 @@ set(SOURCES
     app/gazevisualizer.cpp
     media/video_source.cpp
     io/csv_gaze_writer.cpp
+    io/pipeline_publisher_factory.cpp
+    io/pipeline_publisher.cpp
+    io/null_pipeline_publisher.cpp
     pipelines/vision_pipeline.cpp
     ${CMAKE_SOURCE_DIR}/third_party/sort-cpp/sort-c++/KalmanTracker.cpp
     ${CMAKE_SOURCE_DIR}/third_party/sort-cpp/sort-c++/Hungarian.cpp
 )
 
-# Executable
-add_executable(${PROJECT_NAME} ${SOURCES})
+if(ENABLE_RAPPORT_GRPC)
+  list(APPEND SOURCES
+    io/proto_mapper.cpp
+    io/grpc_pipeline_publisher.cpp
+    ${RAPPORT_GENERATED_SRCS}
+  )
+endif()
+
+# Executable (GUI subsystem on Windows: no extra console window)
+add_executable(${PROJECT_NAME} WIN32 ${SOURCES})
 
 target_include_directories(${PROJECT_NAME} PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+if(ENABLE_RAPPORT_GRPC)
+  target_include_directories(${PROJECT_NAME} PRIVATE
+    ${RAPPORT_GENERATED_DIR}
+  )
+  target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RAPPORT_GRPC=1)
+endif()
 
 # Include directories - add the onnxruntime subdirectory
 target_link_libraries(${PROJECT_NAME}
@@ -66,3 +118,11 @@ target_link_libraries(${PROJECT_NAME}
   Qt6::Widgets
   ${VTK_LIBRARIES}
 )
+
+if(ENABLE_RAPPORT_GRPC)
+  target_link_libraries(${PROJECT_NAME}
+    protobuf::libprotobuf
+    gRPC::grpc++
+    gRPC::grpc
+  )
+endif()

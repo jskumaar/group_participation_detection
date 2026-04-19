@@ -45,7 +45,7 @@ struct TrackerConfig {
     int num_people = 3;
     float max_angle_deg = 20.0f;
 
-    float eye_boost_knee = 13.0f;
+    float eye_boost_knee = 15.0f;
     float eye_boost_steepness = 0.10f;
     float eye_boost_max = 0.7f;
 

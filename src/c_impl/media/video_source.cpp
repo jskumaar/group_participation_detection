@@ -54,5 +54,12 @@ long VideoSource::currentFrame() const {
     return static_cast<long>(cap_.get(cv::CAP_PROP_POS_FRAMES));
 }
 
+std::uint64_t VideoSource::currentTimestampNs() const {
+    if (!cap_.isOpened()) return 0;
+    const double posMs = cap_.get(cv::CAP_PROP_POS_MSEC);
+    if (!(posMs > 0.0)) return 0;
+    return static_cast<std::uint64_t>(posMs * 1'000'000.0);
+}
+
 } // namespace media
 

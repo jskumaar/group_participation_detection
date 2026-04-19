@@ -10,7 +10,8 @@ static float eyeBoost(const TrackerConfig& config, float yaw_deg) {
     float max_boost = config.eye_boost_max;
     float knee = config.eye_boost_knee;
     float steepness = config.eye_boost_steepness;
-    float extra = max_boost * (1.0f - 1.0f / (1.0f + std::exp((y - knee) * steepness)));
+    float z = (y - knee) * steepness;
+    float extra = max_boost * std::exp(-z * z);
     return 1.0f + extra;
 }
 

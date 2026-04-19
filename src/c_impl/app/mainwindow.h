@@ -41,6 +41,7 @@ private:
     QLabel *statusLabel = nullptr;
     QLabel *fpsLabel = nullptr;
     QLabel *yoloLabel = nullptr;
+    QLabel *positionLabel = nullptr;
     QLabel *gazeInfoLabel = nullptr;
     GazeVisualizer *gazeVisualizer = nullptr;
 

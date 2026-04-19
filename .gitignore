@@ -3,7 +3,7 @@ codes/insta360/sdk/*
 codes/insta360/build/*
 src/models 
 src/c_impl/models/
-src/c_impl/build/
+build/
 src/c_impl/onnx/
 src/c_impl/CmakeLists.txt
 src/c_impl/.vs/
@@ -11,3 +11,13 @@ src/python/detections_out/*
 src/python/live_out/*
 src/calib_data/*
 datasets/*src/c_impl/CmakeLists.txt
+src/python/generated/rapport_pb2.py
+src/python/generated/rapport_pb2_grpc.py
+src/python/logs/
+__pycache__
+src/c_impl/build_test/
+src/c_impl/build_test_grpc/
+calibration_data.npz
+src/pilot.mp4
+src/ground_truth.csv
+*.mp4

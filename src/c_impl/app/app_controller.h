@@ -4,11 +4,14 @@
 #include <QElapsedTimer>
 #include <QTimer>
 #include <QString>
+#include <chrono>
+#include <memory>
 
 #include <opencv2/opencv.hpp>
 
 #include "app/videowidget.h"
 #include "io/csv_gaze_writer.h"
+#include "io/pipeline_publisher.h"
 #include "media/video_source.h"
 #include "pipelines/vision_pipeline.h"
 
@@ -39,6 +42,7 @@ signals:
     void playButtonTextChanged(const QString& text);
     void sliderRangeChanged(long min, long max);
     void sliderValueChanged(long value);
+    void playbackPositionChanged(long currentFrame, long totalFrames, qint64 timestampNs);
 
     void frameReady(const cv::Mat& frame);
     void overlaysReady(const std::vector<VideoWidget::PersonBox>& overlays);
@@ -68,6 +72,8 @@ private:
     media::VideoSource videoSource_;
     pipelines::VisionPipeline vision_;
     io::CsvGazeWriter csvWriter_;
+    std::unique_ptr<io::IPipelinePublisher> pipelinePublisher_;
+    std::chrono::steady_clock::time_point sessionStartTs_;
 
     bool showVideo_ = true;
     bool showVTK_ = true;

@@ -10,7 +10,6 @@
 #include <cmath>
 #include <deque>
 #include <vector>
-#include <fstream>
 
 class PanoViewer{
     public:
@@ -42,7 +41,6 @@ class PanoViewer{
         cv::Rect convertPerspectiveRectToEquirectangular(const cv::Rect& perspective_box, int pano_width, int pano_height) const;
 
         void gaze_analysis(std::vector<gaze>& gazes);
-        void saveGazeAnalysis(std::ofstream& csv_file, long frame_number, const std::vector<gaze>& gazes);
         bool isLookingAt(PanoViewer::gaze gaze, cv::Point3f facePos, float maxAngleDeg);
 
     private:

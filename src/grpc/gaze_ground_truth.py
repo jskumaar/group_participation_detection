@@ -121,7 +121,7 @@ class GroundTruthGazeComparator:
         return expected
 
     def compare_update(self, update) -> ComparisonResult:
-        timestamp_s = float(getattr(update, "source_timestamp_ns", 0)) / 1e9
+        timestamp_s = float(getattr(update, "playback_timestamp_ns", 0)) / 1e9
         expected = self._expected_pairs_for_timestamp(timestamp_s)
         if not expected:
             return ComparisonResult(compared_pairs=0, mismatched_pairs=0, is_mismatch=False)

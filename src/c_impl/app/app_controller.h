@@ -4,14 +4,13 @@
 #include <QElapsedTimer>
 #include <QTimer>
 #include <QString>
-#include <chrono>
 #include <memory>
 
 #include <opencv2/opencv.hpp>
 
 #include "app/videowidget.h"
 #include "io/csv_gaze_writer.h"
-#include "io/pipeline_publisher.h"
+#include "io/grpc_pipeline_publisher.h"
 #include "media/video_source.h"
 #include "pipelines/vision_pipeline.h"
 
@@ -31,9 +30,6 @@ public:
 
     TrackerConfig getTrackerConfig() const { return vision_.getConfig(); }
     void applyTrackerConfig(const TrackerConfig& cfg);
-
-    int panoramaOffsetPx() const { return vision_.panoramaOffsetPx(); }
-    void setPanoramaOffsetPx(int px) { vision_.setPanoramaOffsetPx(px); }
 
 signals:
     void statusTextChanged(const QString& text);
@@ -72,8 +68,7 @@ private:
     media::VideoSource videoSource_;
     pipelines::VisionPipeline vision_;
     io::CsvGazeWriter csvWriter_;
-    std::unique_ptr<io::IPipelinePublisher> pipelinePublisher_;
-    std::chrono::steady_clock::time_point sessionStartTs_;
+    std::unique_ptr<io::GrpcPipelinePublisher> pipelinePublisher_;
 
     bool showVideo_ = true;
     bool showVTK_ = true;
@@ -86,7 +81,8 @@ private:
     int lastPanoRows_ = 0;
     int lastPanoCols_ = 0;
 
-    std::vector<cv::Rect> lastYoloDetections_;
+    /** Raw YOLO boxes on the current frame while the user is picking exactly num_people. */
+    std::vector<cv::Rect> selectionCandidates_;
     std::vector<bool> selectionMask_;
     std::vector<int> selectionOrder_;
 };

@@ -21,3 +21,4 @@ calibration_data.npz
 src/pilot.mp4
 src/ground_truth.csv
 *.mp4
+.vscode/

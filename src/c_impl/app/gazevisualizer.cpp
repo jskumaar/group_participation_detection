@@ -11,9 +11,11 @@
 #include <cmath>
 
 GazeVisualizer::GazeVisualizer(QWidget *parent) : QVTKOpenGLNativeWidget(parent) {
+    //initialize widget window
     vtkNew<vtkGenericOpenGLRenderWindow> renderWindow;
     setRenderWindow(renderWindow);
 
+    //initialize renderer
     renderer = vtkSmartPointer<vtkRenderer>::New();
     renderWindow->AddRenderer(renderer);
 
@@ -34,7 +36,7 @@ void GazeVisualizer::updateData(const std::vector<PanoViewer::gaze>& gazes) {
 
     for (const auto& p : gazes) {
         activeIDs.push_back(p.personID);
-
+        //if person ID is not in actorsMap, create new actors
         if (actorsMap.find(p.personID) == actorsMap.end()) {
             PersonActors actors;
 
@@ -72,13 +74,15 @@ void GazeVisualizer::updateData(const std::vector<PanoViewer::gaze>& gazes) {
         }
 
         PersonActors& actors = actorsMap[p.personID];
-
+        //set position of head sphere
         actors.headActor->SetPosition(p.start.x, p.start.y, p.start.z);
         actors.idLabelActor->SetPosition(p.start.x, p.start.y + 5.0, p.start.z);
 
+        //set position of id label
         vtkNew<vtkTransform> transform;
-        transform->Translate(p.start.x, p.start.y, p.start.z);
 
+        //set direction of gaze arrow
+        transform->Translate(p.start.x, p.start.y, p.start.z);
         double defaultDir[3] = {1.0, 0.0, 0.0};
         double targetDir[3] = { (double)p.direction[0], (double)p.direction[1], (double)p.direction[2] };
 
@@ -88,16 +92,19 @@ void GazeVisualizer::updateData(const std::vector<PanoViewer::gaze>& gazes) {
             targetDir[1] /= norm;
             targetDir[2] /= norm;
         }
-
+        /*take cross product of default direction 
+        and target direction to get axis of rotation*/
         double axis[3];
         axis[0] = defaultDir[1]*targetDir[2] - defaultDir[2]*targetDir[1];
         axis[1] = defaultDir[2]*targetDir[0] - defaultDir[0]*targetDir[2];
         axis[2] = defaultDir[0]*targetDir[1] - defaultDir[1]*targetDir[0];
 
+        /*calculate dot product of default direction and target direction
+        to get angle between them (no need to normalize directions 
+        since all are unit vectors)*/
         double dotProd = defaultDir[0]*targetDir[0] + defaultDir[1]*targetDir[1] + defaultDir[2]*targetDir[2];
         if (dotProd < -1.0) dotProd = -1.0;
         else if (dotProd > 1.0) dotProd = 1.0;
-
         double angleRad = std::acos(dotProd);
         double angleDeg = angleRad * 180.0 / 3.14159265;
 
@@ -108,10 +115,11 @@ void GazeVisualizer::updateData(const std::vector<PanoViewer::gaze>& gazes) {
         }
 
         transform->Scale(200.0, 200.0, 200.0);
-
+        //apply transformation to gaze arrow actor as defined
         actors.gazeArrowActor->SetUserTransform(transform);
     }
-
+    //remove actors that are not in activeIDs
+    //(i.e. people who are not being tracked anymore)
     for (auto it = actorsMap.begin(); it != actorsMap.end(); ) {
         bool found = false;
         for (int id : activeIDs) {
@@ -128,6 +136,7 @@ void GazeVisualizer::updateData(const std::vector<PanoViewer::gaze>& gazes) {
         }
     }
 
+    //render the scene
     renderWindow()->Render();
 }
 

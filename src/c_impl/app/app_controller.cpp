@@ -4,15 +4,12 @@
 #include <chrono>
 #include <cstdint>
 #include <cmath>
+#include <cstdlib>
+#include <string>
 
-#include "io/pipeline_publisher_factory.h"
+#include "io/grpc_pipeline_publisher.h"
 
 namespace {
-
-std::uint64_t toNs(std::chrono::steady_clock::duration duration) {
-    return static_cast<std::uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count());
-}
 
 float angleBetweenDeg(const cv::Vec3f& gazeDirection, const cv::Point3f& origin, const cv::Point3f& target) {
     cv::Vec3f toTarget(target.x - origin.x, target.y - origin.y, target.z - origin.z);
@@ -27,20 +24,38 @@ float angleBetweenDeg(const cv::Vec3f& gazeDirection, const cv::Point3f& origin,
     return std::acos(cosine) * (180.0f / 3.14159265359f);
 }
 
+std::unique_ptr<io::GrpcPipelinePublisher> createGrpcStream() {
+    const char* target = std::getenv("RAPPORT_GRPC_TARGET");
+    const std::string endpoint = (target != nullptr && *target != '\0')
+        ? std::string(target)
+        : std::string("127.0.0.1:50051");
+
+    const char* maxQueuedEnv = std::getenv("RAPPORT_GRPC_MAX_QUEUED");
+    std::size_t maxQueued = 256;
+    if (maxQueuedEnv != nullptr) {
+        try {
+            maxQueued = static_cast<std::size_t>(std::stoul(maxQueuedEnv));
+        } catch (...) {
+            maxQueued = 256;
+        }
+    }
+
+    return std::make_unique<io::GrpcPipelinePublisher>(endpoint, maxQueued);
+}
+
 } // namespace
 
 AppController::AppController(QObject* parent)
     : QObject(parent) {
 
-    tickTimer_.setInterval(33);
+    tickTimer_.setInterval(25);
     connect(&tickTimer_, &QTimer::timeout, this, &AppController::onTick);
 
     fpsTimer_.start();
 
     csvWriter_.open("gaze_analysis.csv");
     vision_.setConfig(vision_.getConfig());
-    sessionStartTs_ = std::chrono::steady_clock::now();
-    pipelinePublisher_ = io::createPipelinePublisherFromEnv();
+    pipelinePublisher_ = createGrpcStream();
     pipelinePublisher_->start();
 
     emit statusTextChanged("Ready");
@@ -86,25 +101,30 @@ void AppController::openVideoPath(const QString& path) {
     lastPanoRows_ = firstFrame.rows;
     lastPanoCols_ = firstFrame.cols;
 
-    enterSelectionMode(firstFrame, QString("Loaded: %1. Please select people to track.").arg(path));
+    enterSelectionMode(
+        firstFrame,
+        QString("Loaded: %1. Please select exactly %2 people to track.")
+            .arg(path)
+            .arg(vision_.getConfig().num_people));
 }
 
 void AppController::togglePlayPause() {
     if (!videoSource_.isOpen()) return;
 
+    //convert selectionorder_ (list of indices) to list of respective bounding boxes
     if (isSelecting_) {
         std::vector<cv::Rect> selected;
         for (int idx : selectionOrder_) {
             if (idx >= 0 &&
-                (size_t)idx < lastYoloDetections_.size() &&
+                (size_t)idx < selectionCandidates_.size() &&
                 (size_t)idx < selectionMask_.size() &&
                 selectionMask_[idx]) {
-                selected.push_back(lastYoloDetections_[idx]);
+                selected.push_back(selectionCandidates_[idx]);
             }
         }
 
-        if (selected.size() < (size_t)vision_.getConfig().num_people) {
-            emit statusTextChanged(QString("Please select at least %1 people (Selected: %2).")
+        if ((int)selected.size() != vision_.getConfig().num_people) {
+            emit statusTextChanged(QString("Select exactly %1 people (currently %2).")
                 .arg(vision_.getConfig().num_people)
                 .arg(selected.size()));
             return;
@@ -112,7 +132,6 @@ void AppController::togglePlayPause() {
 
         vision_.setExpectedPeople(vision_.getConfig().num_people);
         vision_.setSelectedDetections(selected, lastPanoRows_, lastPanoCols_);
-        lastYoloDetections_ = selected;
 
         isSelecting_ = false;
         emit selectingChanged(false);
@@ -145,12 +164,20 @@ void AppController::onBoxClicked(int index) {
     if (!isSelecting_) return;
     if (index < 0 || (size_t)index >= selectionMask_.size()) return;
 
-    selectionMask_[index] = !selectionMask_[index];
+    const int need = vision_.getConfig().num_people;
+
     if (selectionMask_[index]) {
-        selectionOrder_.push_back(index);
-    } else {
+        selectionMask_[index] = false;
         auto it = std::find(selectionOrder_.begin(), selectionOrder_.end(), index);
         if (it != selectionOrder_.end()) selectionOrder_.erase(it);
+    } else {
+        if ((int)selectionOrder_.size() >= need) {
+            emit statusTextChanged(
+                QString("Select exactly %1 people — click a green box to deselect one first.").arg(need));
+            return;
+        }
+        selectionMask_[index] = true;
+        selectionOrder_.push_back(index);
     }
     updateSelectionOverlays();
 }
@@ -201,9 +228,9 @@ void AppController::enterSelectionMode(const cv::Mat& frame, const QString& reas
     selectionOrder_.clear();
 
     auto selection = vision_.prepareSelection(frame);
-    lastYoloDetections_ = selection.yoloDetections;
+    selectionCandidates_ = selection.yoloDetections;
 
-    selectionMask_.assign(lastYoloDetections_.size(), false);
+    selectionMask_.assign(selectionCandidates_.size(), false);
     updateSelectionOverlays();
 
     emit statusTextChanged(reason);
@@ -214,24 +241,24 @@ void AppController::enterSelectionMode(const cv::Mat& frame, const QString& reas
 
 void AppController::updateSelectionOverlays() {
     std::vector<VideoWidget::PersonBox> overlays;
-    overlays.reserve(lastYoloDetections_.size());
+    overlays.reserve(selectionCandidates_.size());
 
-    for (size_t i = 0; i < lastYoloDetections_.size(); ++i) {
+    //set id 0 if not selected, 1-based index if selected since 
+    //label 0 does not get displayed in VideoWidget
+    for (size_t i = 0; i < selectionCandidates_.size(); ++i) {
         Qt::GlobalColor color = (i < selectionMask_.size() && selectionMask_[i]) ? Qt::green : Qt::red;
         int displayId = 0;
         if (i < selectionMask_.size() && selectionMask_[i]) {
             auto it = std::find(selectionOrder_.begin(), selectionOrder_.end(), (int)i);
             if (it != selectionOrder_.end()) displayId = (int)(it - selectionOrder_.begin()) + 1;
         }
-        overlays.push_back({lastYoloDetections_[i], displayId, color});
+        overlays.push_back({selectionCandidates_[i], displayId, color});
     }
     emit overlaysReady(overlays);
 }
 
 void AppController::processTrackingFrame(const cv::Mat& frame) {
-    const auto sourceTs = std::chrono::steady_clock::now();
-    auto result = vision_.processFrame(frame, justSeeked_, /*enableTracking*/true);
-    const auto processedTs = std::chrono::steady_clock::now();
+    auto result = vision_.processFrame(frame, justSeeked_);
     if (justSeeked_) justSeeked_ = false;
 
     if (result.requestSelection) {
@@ -240,30 +267,21 @@ void AppController::processTrackingFrame(const cv::Mat& frame) {
         tickTimer_.stop();
         emit playButtonTextChanged("Resume Tracking");
 
-        lastYoloDetections_ = result.yoloDetections;
-        selectionMask_.assign(lastYoloDetections_.size(), false);
-        selectionOrder_.clear();
-
         enterSelectionMode(frame, "Tracking Lost: Please re-select people.");
         return;
-    }
-
-    if (isPlaying_) {
-        csvWriter_.writeFrame(videoSource_.currentFrame(), result.gazes);
-        csvWriter_.flush();
     }
 
     // Interaction label + publish payload:
     // include all directed non-self pairs and set is_looking by threshold.
     QString interactionText = "Interactions: ";
     bool found = false;
-    std::vector<io::InteractionPair> interactions;
+    std::vector<domain::InteractionPair> interactions;
     for (size_t i = 0; i < result.gazes.size(); ++i) {
         for (size_t j = 0; j < result.gazes.size(); ++j) {
             if (i == j) continue;
             const float angle = angleBetweenDeg(result.gazes[i].direction, result.gazes[i].start, result.gazes[j].start);
             const bool isLooking = angle <= vision_.getConfig().max_angle_deg;
-            interactions.push_back(io::InteractionPair{
+            interactions.push_back(domain::InteractionPair{
                 result.gazes[i].personID,
                 result.gazes[j].personID,
                 angle,
@@ -278,10 +296,16 @@ void AppController::processTrackingFrame(const cv::Mat& frame) {
     }
     if (!found) interactionText += "None";
 
+    if (isPlaying_) {
+        csvWriter_.writeFrame(videoSource_.currentFrame(), result.gazes, interactions);
+        csvWriter_.flush();
+    }
+
     emit interactionTextChanged(interactionText);
     emit yoloStatusChanged(result.yoloActive);
 
     // Overlays
+    //yolo detections only contain yolo bpunding boxes of people we are tracking
     std::vector<VideoWidget::PersonBox> overlays;
     overlays.reserve(result.gazes.size() + result.yoloDetections.size());
     for (const auto& g : result.gazes) overlays.push_back({g.box, g.personID, Qt::green});
@@ -289,10 +313,9 @@ void AppController::processTrackingFrame(const cv::Mat& frame) {
     emit overlaysReady(overlays);
 
     if (pipelinePublisher_) {
-        io::PipelineFrameContext publishContext;
+        domain::PipelineFrameContext publishContext;
         publishContext.frame_index = static_cast<std::uint64_t>(videoSource_.currentFrame());
-        publishContext.source_timestamp_ns = videoSource_.currentTimestampNs();
-        publishContext.processed_timestamp_ns = toNs(processedTs - sessionStartTs_);
+        publishContext.playback_timestamp_ns = videoSource_.currentTimestampNs();
         publishContext.interactions = std::move(interactions);
         pipelinePublisher_->publish(result, publishContext);
     }

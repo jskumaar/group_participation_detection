@@ -3,6 +3,7 @@
 import grpc
 import warnings
 
+from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
 import rapport_pb2 as rapport__pb2
 
 GRPC_GENERATED_VERSION = '1.78.0'
@@ -34,17 +35,17 @@ class RapportStreamStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.StreamPipelineUpdates = channel.stream_unary(
+        self.StreamPipelineUpdates = channel.unary_stream(
                 '/rapport.RapportStream/StreamPipelineUpdates',
-                request_serializer=rapport__pb2.PipelineUpdate.SerializeToString,
-                response_deserializer=rapport__pb2.StreamAck.FromString,
+                request_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+                response_deserializer=rapport__pb2.PipelineUpdate.FromString,
                 _registered_method=True)
 
 
 class RapportStreamServicer(object):
     """Missing associated documentation comment in .proto file."""
 
-    def StreamPipelineUpdates(self, request_iterator, context):
+    def StreamPipelineUpdates(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -53,10 +54,10 @@ class RapportStreamServicer(object):
 
 def add_RapportStreamServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'StreamPipelineUpdates': grpc.stream_unary_rpc_method_handler(
+            'StreamPipelineUpdates': grpc.unary_stream_rpc_method_handler(
                     servicer.StreamPipelineUpdates,
-                    request_deserializer=rapport__pb2.PipelineUpdate.FromString,
-                    response_serializer=rapport__pb2.StreamAck.SerializeToString,
+                    request_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                    response_serializer=rapport__pb2.PipelineUpdate.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -70,7 +71,7 @@ class RapportStream(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
-    def StreamPipelineUpdates(request_iterator,
+    def StreamPipelineUpdates(request,
             target,
             options=(),
             channel_credentials=None,
@@ -80,12 +81,12 @@ class RapportStream(object):
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.stream_unary(
-            request_iterator,
+        return grpc.experimental.unary_stream(
+            request,
             target,
             '/rapport.RapportStream/StreamPipelineUpdates',
-            rapport__pb2.PipelineUpdate.SerializeToString,
-            rapport__pb2.StreamAck.FromString,
+            google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            rapport__pb2.PipelineUpdate.FromString,
             options,
             channel_credentials,
             insecure,

@@ -2,25 +2,18 @@ syntax = "proto3";
 
 package rapport;
 
+import "google/protobuf/empty.proto";
+
 message Vector3 {
   float x = 1;
   float y = 2;
   float z = 3;
 }
 
-message BoundingBox {
-  float x = 1;
-  float y = 2;
-  float width = 3;
-  float height = 4;
-  bool normalized = 5;
-}
-
 message GazeSample {
   int32 person_id = 1;
   Vector3 origin = 2;
   Vector3 direction = 3;
-  BoundingBox box = 4;
 }
 
 message InteractionEdge {
@@ -30,30 +23,15 @@ message InteractionEdge {
   bool is_looking = 4;
 }
 
-message TrackerStatus {
-  bool yolo_active = 1;
-  bool request_selection = 2;
-  string status_text = 3;
-}
-
 message PipelineUpdate {
-  uint32 schema_version = 1;
-  uint64 sequence_id = 2;
-  uint64 frame_index = 3;
-  uint64 source_timestamp_ns = 4;
-  uint64 processed_timestamp_ns = 5;
-  uint64 dropped_updates_total = 6;
-
-  repeated InteractionEdge interactions = 11;
+  uint64 frame_index = 1;
+  uint64 playback_timestamp_ns = 2;
+  repeated GazeSample gazes = 3;
+  repeated InteractionEdge interactions = 4;
 
   reserved 100 to 199;
 }
 
-message StreamAck {
-  uint64 received_messages = 1;
-  string message = 2;
-}
-
 service RapportStream {
-  rpc StreamPipelineUpdates(stream PipelineUpdate) returns (StreamAck);
+  rpc StreamPipelineUpdates(google.protobuf.Empty) returns (stream PipelineUpdate);
 }

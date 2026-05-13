@@ -65,6 +65,8 @@ void VideoWidget::paintEvent(QPaintEvent *event) {
 
 void VideoWidget::mousePressEvent(QMouseEvent *event) {
     if (!m_showVisuals || m_people.empty() || m_currentImage.isNull()) {
+        /* if mouse click does not apply for current widget send mouse 
+        click event to parent widget */
         QWidget::mousePressEvent(event);
         return;
     }
@@ -86,7 +88,8 @@ void VideoWidget::mousePressEvent(QMouseEvent *event) {
             return;
         }
     }
-
+    /* if mouse click does not apply for current widget send mouse 
+    click event to parent widget */
     QWidget::mousePressEvent(event);
 }
 
@@ -96,6 +99,9 @@ QImage VideoWidget::matToQImage(const cv::Mat& mat) {
         QImage img(qImageBuffer, mat.cols, mat.rows, mat.step, QImage::Format_RGB888);
         return img.rgbSwapped();
     }
+    else
+        qDebug() << "Unsupported image format";
+        
     return QImage();
 }
 

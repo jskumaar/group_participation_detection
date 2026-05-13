@@ -45,8 +45,10 @@ def cmd_replay(args: argparse.Namespace) -> int:
         if duration_ns < window_ns:
             continue
 
-        start_s = int(entry.get("start_source_timestamp_ns", 0)) / 1e9
-        end_s = int(entry.get("end_source_timestamp_ns", 0)) / 1e9
+        start_ns = int(entry.get("start_playback_timestamp_ns", entry.get("start_source_timestamp_ns", 0)))
+        end_ns = int(entry.get("end_playback_timestamp_ns", entry.get("end_source_timestamp_ns", 0)))
+        start_s = start_ns / 1e9
+        end_s = end_ns / 1e9
         duration_s = duration_ns / 1e9
         print(
             "t={start:.3f}s-{end:.3f}s (dur={dur:.3f}s) frames={fs}-{fe} "
@@ -78,7 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Rapport bridge CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    serve_parser = subparsers.add_parser("serve", help="Run Python gRPC analyzer server")
+    serve_parser = subparsers.add_parser("serve", help="Run Python gRPC analyzer client")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=50051)
     serve_parser.add_argument(

@@ -46,9 +46,6 @@ private:
     GazeVisualizer *gazeVisualizer = nullptr;
 
     AppController* controller_ = nullptr;
-
-    bool showVideo = true;
-    bool showVTK = true;
 };
 
 #endif // MAINWINDOW_H

@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import re
 import sys
-from concurrent import futures
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, TextIO, Tuple
+import time
 
 import grpc
+from google.protobuf import empty_pb2
 
 GENERATED_DIR = Path(__file__).resolve().parent / "generated"
 if str(GENERATED_DIR) not in sys.path:
@@ -89,7 +90,7 @@ class UniqueMismatchLogger:
         update: "rapport_pb2.PipelineUpdate",
         ground_truth: GroundTruthGazeComparator,
     ) -> int:
-        ts_ns = int(getattr(update, "source_timestamp_ns", 0))
+        ts_ns = int(getattr(update, "playback_timestamp_ns", 0))
         frame_index = int(getattr(update, "frame_index", 0))
         timestamp_s = ts_ns / 1e9
         expected_by_pair = ground_truth._expected_pairs_for_timestamp(timestamp_s)
@@ -144,8 +145,8 @@ class UniqueMismatchLogger:
         entry = {
             "from": pair[0],
             "to": pair[1],
-            "start_source_timestamp_ns": active.start_ts_ns,
-            "end_source_timestamp_ns": active.last_ts_ns,
+            "start_playback_timestamp_ns": active.start_ts_ns,
+            "end_playback_timestamp_ns": active.last_ts_ns,
             "duration_ns": max(0, active.last_ts_ns - active.start_ts_ns),
             "start_frame_index": active.start_frame,
             "end_frame_index": active.last_frame,
@@ -157,80 +158,46 @@ class UniqueMismatchLogger:
         self._fh.flush()
 
 
-class RapportStreamServicer(rapport_pb2_grpc.RapportStreamServicer):
-    def __init__(
-        self,
-        ground_truth: Optional[GroundTruthGazeComparator] = None,
-        mismatch_log_dir: str = "logs/mismatch_logs",
-    ) -> None:
-        self._ground_truth = ground_truth
-        self._mismatch_log_dir = Path(mismatch_log_dir)
-
-    def StreamPipelineUpdates(self, request_iterator, context):
-        count = 0
-        mismatch_logger: Optional[UniqueMismatchLogger] = None
-        if self._ground_truth is not None:
-            log_path = _next_report_path(self._mismatch_log_dir, "jsonl")
-            mismatch_logger = UniqueMismatchLogger(log_path)
-            print(f"Logging unique mismatches to {log_path}")
-
-        try:
-            for update in request_iterator:
-                if mismatch_logger is not None and self._ground_truth is not None:
-                    mismatch_logger.handle_update(update, self._ground_truth)
-                count += 1
-        finally:
-            if mismatch_logger is not None:
-                mismatch_logger.close()
-                print(f"Closed mismatch log {mismatch_logger.output_path}")
-
-        return rapport_pb2.StreamAck(
-            received_messages=count,
-            message=f"Buffered {count} updates",
-        )
-
-
-def _build_server(
-    host: str,
-    port: int,
+def _build_comparator(
     ground_truth_csv: Optional[str],
     person_id_map: Optional[str],
-    mismatch_log_dir: str,
-) -> grpc.Server:
+) -> Optional[GroundTruthGazeComparator]:
     id_map = parse_person_id_map(person_id_map)
-    ground_truth = (
+    return (
         GroundTruthGazeComparator(ground_truth_csv, person_id_map=id_map)
         if ground_truth_csv
         else None
     )
 
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
-    rapport_pb2_grpc.add_RapportStreamServicer_to_server(
-        RapportStreamServicer(
-            ground_truth=ground_truth,
-            mismatch_log_dir=mismatch_log_dir,
-        ),
-        server,
-    )
-    server.add_insecure_port(f"{host}:{port}")
-    server.start()
-    return server
-
-
-def serve(
+def run_client_once(
     host: str = "127.0.0.1",
     port: int = 50051,
     ground_truth_csv: Optional[str] = None,
     person_id_map: Optional[str] = None,
     mismatch_log_dir: str = "logs/mismatch_logs",
-) -> grpc.Server:
-    return _build_server(
-        host=host,
-        port=port,
+) -> None:
+    endpoint = f"{host}:{port}"
+    ground_truth = _build_comparator(
         ground_truth_csv=ground_truth_csv,
         person_id_map=person_id_map,
-        mismatch_log_dir=mismatch_log_dir,
     )
+    mismatch_logger: Optional[UniqueMismatchLogger] = None
+    if ground_truth is not None:
+        log_path = _next_report_path(Path(mismatch_log_dir), "jsonl")
+        mismatch_logger = UniqueMismatchLogger(log_path)
+        print(f"Logging unique mismatches to {log_path}")
+
+    try:
+        with grpc.insecure_channel(endpoint) as channel:
+            stub = rapport_pb2_grpc.RapportStreamStub(channel)
+            updates = stub.StreamPipelineUpdates(empty_pb2.Empty())
+            for update in updates:
+                if mismatch_logger is not None and ground_truth is not None:
+                    mismatch_logger.handle_update(update, ground_truth)
+    finally:
+        if mismatch_logger is not None:
+            mismatch_logger.close()
+            print(f"Closed mismatch log {mismatch_logger.output_path}")
 
 
 def serve_forever(
@@ -240,17 +207,23 @@ def serve_forever(
     person_id_map: Optional[str] = None,
     mismatch_log_dir: str = "logs/mismatch_logs",
 ) -> None:
-    server = _build_server(
-        host=host,
-        port=port,
-        ground_truth_csv=ground_truth_csv,
-        person_id_map=person_id_map,
-        mismatch_log_dir=mismatch_log_dir,
-    )
-    print(f"Rapport gRPC server listening on {host}:{port}")
+    endpoint = f"{host}:{port}"
+    print(f"Rapport gRPC client subscribing to {endpoint}")
     try:
-        server.wait_for_termination()
+        while True:
+            try:
+                run_client_once(
+                    host=host,
+                    port=port,
+                    ground_truth_csv=ground_truth_csv,
+                    person_id_map=person_id_map,
+                    mismatch_log_dir=mismatch_log_dir,
+                )
+            except grpc.RpcError as exc:
+                print(f"gRPC stream error: {exc.code().name} - {exc.details()}")
+                time.sleep(1.0)
+            except Exception as exc:
+                print(f"Client loop error: {exc}")
+                time.sleep(1.0)
     except KeyboardInterrupt:
         pass
-    finally:
-        server.stop(grace=2)

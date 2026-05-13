@@ -229,28 +229,6 @@ float PanoViewer::computeFOVForPersonBox(const cv::Rect& box, int pano_height, i
     return theta_deg;
 }
 
-void PanoViewer::saveGazeAnalysis(std::ofstream& csv_file, long frame_number, const std::vector<gaze>& gazes) {
-    if (!csv_file.is_open()) return;
-
-    for (const auto& g : gazes) {
-        std::string looking_at_ids = "";
-        for (const auto& other : gazes) {
-            if (g.personID == other.personID) continue;
-            if (isLookingAt(g, other.start, max_angle_threshold)) {
-                if (!looking_at_ids.empty()) looking_at_ids += ";";
-                looking_at_ids += std::to_string(other.personID);
-            }
-        }
-
-        csv_file << frame_number << ","
-                 << g.personID << ","
-                 << (g.box.x + g.box.width / 2.0f) << "," << (g.box.y + g.box.height / 2.0f) << ","
-                 << g.start.x << "," << g.start.y << "," << g.start.z << ","
-                 << g.direction[0] << "," << g.direction[1] << "," << g.direction[2] << ","
-                 << "\"" << looking_at_ids << "\"\n";
-    }
-}
-
 cv::Rect PanoViewer::convertPerspectiveRectToEquirectangular(const cv::Rect& perspective_box, int pano_width, int pano_height) const {
 
     std::vector<cv::Point2f> corners;

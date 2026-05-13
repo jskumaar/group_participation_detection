@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,19 @@ struct VisionFrameResult {
     bool requestSelection = false;         // pipeline requests the UI to re-select people
 
     std::string statusText;                // optional status for UI
+};
+
+struct InteractionPair {
+    int from_person_id = -1;
+    int to_person_id = -1;
+    float angle_deg = 0.0f;
+    bool is_looking = false;
+};
+
+struct PipelineFrameContext {
+    std::uint64_t frame_index = 0;
+    std::uint64_t playback_timestamp_ns = 0;
+    std::vector<InteractionPair> interactions;
 };
 
 } // namespace domain

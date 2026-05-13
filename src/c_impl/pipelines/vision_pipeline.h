@@ -19,26 +19,29 @@ public:
     TrackerConfig getConfig() const { return tracker_.getConfig(); }
     void setConfig(const TrackerConfig& cfg);
 
-    void setPanoramaOffsetPx(int offsetPx) { panorama_offset_ = offsetPx; }
-    int panoramaOffsetPx() const { return panorama_offset_; }
-
     void setExpectedPeople(int n);
 
     // Selection lifecycle
     domain::VisionFrameResult prepareSelection(const cv::Mat& panoFrame);
     void setSelectedDetections(const std::vector<cv::Rect>& selected, int panoRows, int panoCols);
-    size_t selectedCount() const { return validYoloDetections_.size(); }
+    size_t selectedCount() const { return trackedBoxes_.size(); }
 
     // Main processing
-    domain::VisionFrameResult processFrame(const cv::Mat& panoFrame, bool justSeeked, bool enableTracking);
+    domain::VisionFrameResult processFrame(const cv::Mat& panoFrame, bool justSeeked);
 
     PanoViewer& panoViewer() { return pano_viewer_; }
     const PanoViewer& panoViewer() const { return pano_viewer_; }
 
 private:
+    struct ValidDetectionUpdate {
+        std::vector<cv::Rect> updatedYOLOBoxes;
+        /** Same length as updatedYOLOBoxes; 1 when that slot matched this frame. */
+        std::vector<char> updateIndices;
+    };
+
     cv::Mat applyPanoramaOffset(const cv::Mat& panoFrame) const;
 
-    std::pair<std::vector<cv::Rect>, std::vector<cv::Rect>> updateValidDetections(
+    ValidDetectionUpdate updateValidDetections(
         const std::vector<cv::Rect>& newDetections,
         const std::vector<cv::Rect>& previousValid) const;
 
@@ -50,10 +53,8 @@ private:
     int yoloFrameCount_ = 0;
     bool justSeeked_ = false;
 
-    std::vector<cv::Rect> lastYoloDetections_;
-    std::vector<cv::Rect> validYoloDetections_;
-
-    int panorama_offset_ = 0;
+    /** Per-person boxes: empty before selection, then exactly num_people; association updates in place. */
+    std::vector<cv::Rect> trackedBoxes_;
 };
 
 } // namespace pipelines

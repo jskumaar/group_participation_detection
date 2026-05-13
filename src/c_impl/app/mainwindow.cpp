@@ -27,7 +27,8 @@ QSettings openDefaultsStore() {
     return QSettings(defaultsIniPath(), QSettings::IniFormat);
 }
 
-void saveDefaults(const TrackerConfig& cfg, int panoramaOffsetPx) {
+void saveDefaults(const TrackerConfig& cfg) {
+    //file IO to ini config file
     QSettings s = openDefaultsStore();
     s.beginGroup("tracker");
     s.setValue("nms_threshold", cfg.nms_threshold);
@@ -42,16 +43,17 @@ void saveDefaults(const TrackerConfig& cfg, int panoramaOffsetPx) {
     s.setValue("yolo_check_interval", cfg.yolo_check_interval);
     s.setValue("head_height_ratio", cfg.head_height_ratio);
     s.setValue("yolorerun_threshold", cfg.yolorerun_threshold);
-    s.setValue("panorama_offset_px", panoramaOffsetPx);
+    s.setValue("panorama_offset_px", cfg.panorama_offset_px);
     s.endGroup();
     s.sync();
 }
 
-bool loadDefaultsInto(TrackerConfig& cfg, int& panoramaOffsetPx) {
+bool loadDefaultsInto(TrackerConfig& cfg) {
     const QString path = defaultsIniPath();
     if (!QFile::exists(path)) return false;
     QSettings s(path, QSettings::IniFormat);
     s.beginGroup("tracker");
+    //syntax: value(key, default_value)
     cfg.nms_threshold = s.value("nms_threshold", cfg.nms_threshold).toFloat();
     cfg.confidence_threshold = s.value("confidence_threshold", cfg.confidence_threshold).toFloat();
     cfg.localizer_threshold = s.value("localizer_threshold", cfg.localizer_threshold).toFloat();
@@ -64,7 +66,7 @@ bool loadDefaultsInto(TrackerConfig& cfg, int& panoramaOffsetPx) {
     cfg.yolo_check_interval = s.value("yolo_check_interval", cfg.yolo_check_interval).toInt();
     cfg.head_height_ratio = s.value("head_height_ratio", cfg.head_height_ratio).toFloat();
     cfg.yolorerun_threshold = s.value("yolorerun_threshold", cfg.yolorerun_threshold).toFloat();
-    panoramaOffsetPx = s.value("panorama_offset_px", panoramaOffsetPx).toInt();
+    cfg.panorama_offset_px = s.value("panorama_offset_px", cfg.panorama_offset_px).toInt();
     s.endGroup();
     return true;
 }
@@ -97,6 +99,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         playButton->setEnabled(true);
     });
     connect(controller_, &AppController::sliderValueChanged, this, [this](long value){
+        //block signal from timeSlider to prevent infinite loop
         QSignalBlocker blocker(timeSlider);
         timeSlider->setValue((int)value);
     });
@@ -126,24 +129,22 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         });
 
     connect(controller_, &AppController::frameReady, this, [this](const cv::Mat& frame){
-        if (showVideo) videoWidget->updateFrame(frame);
+        videoWidget->updateFrame(frame);
     });
     connect(controller_, &AppController::overlaysReady, this, [this](const std::vector<VideoWidget::PersonBox>& overlays){
         videoWidget->updateOverlays(overlays);
     });
     connect(controller_, &AppController::gazesReady, this, [this](const std::vector<PanoViewer::gaze>& gazes){
-        if (showVTK) gazeVisualizer->updateData(gazes);
+        gazeVisualizer->updateData(gazes);
     });
 
-    controller_->setShowVideo(showVideo);
-    controller_->setShowVTK(showVTK);
+    controller_->setShowVideo(true);
+    controller_->setShowVTK(true);
 
     {
         TrackerConfig savedConfig = controller_->getTrackerConfig();
-        int savedOffset = controller_->panoramaOffsetPx();
-        if (loadDefaultsInto(savedConfig, savedOffset)) {
+        if (loadDefaultsInto(savedConfig)) {
             controller_->applyTrackerConfig(savedConfig);
-            controller_->setPanoramaOffsetPx(savedOffset);
         }
     }
 }
@@ -156,6 +157,7 @@ void MainWindow::setupUI() {
     setCentralWidget(centralWidget);
     QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
 
+    //automatically becomes child of mainLayout
     QHBoxLayout *contentLayout = new QHBoxLayout();
     mainLayout->addLayout(contentLayout, 1);
 
@@ -226,6 +228,7 @@ void MainWindow::setupUI() {
 }
 
 void MainWindow::openVideo() {
+    //trigger file selection popup
     QString fileName = QFileDialog::getOpenFileName(this, "Open Video", "", "Video Files (*.mp4 *.avi *.mkv)");
     if (fileName.isEmpty()) return;
     controller_->openVideoPath(fileName);
@@ -240,12 +243,10 @@ void MainWindow::toggleVisuals(bool checked) {
 }
 
 void MainWindow::onVideoToggle(bool checked) {
-    showVideo = checked;
     controller_->setShowVideo(checked);
 }
 
 void MainWindow::onVTKToggle(bool checked) {
-    showVTK = checked;
     controller_->setShowVTK(checked);
 }
 
@@ -316,7 +317,7 @@ void MainWindow::showSettings() {
     QSpinBox *offsetBox = new QSpinBox(&dialog);
     // Keep this wide; controller applies modulo pano width.
     offsetBox->setRange(-50000, 50000);
-    offsetBox->setValue(controller_->panoramaOffsetPx());
+    offsetBox->setValue(config.panorama_offset_px);
     form.addRow("Panorama Offset (px):", offsetBox);
 
     QDoubleSpinBox *rerunThreshBox = new QDoubleSpinBox(&dialog);
@@ -351,15 +352,14 @@ void MainWindow::showSettings() {
         cfg.yolo_check_interval = yoloIntervalBox->value();
         cfg.head_height_ratio = headRatioBox->value();
         cfg.yolorerun_threshold = rerunThreshBox->value();
+        cfg.panorama_offset_px = offsetBox->value();
         return cfg;
     };
 
     connect(setDefaultBtn, &QPushButton::clicked, &dialog, [&]() {
         TrackerConfig cfg = collectConfig();
-        int offset = offsetBox->value();
         controller_->applyTrackerConfig(cfg);
-        controller_->setPanoramaOffsetPx(offset);
-        saveDefaults(cfg, offset);
+        saveDefaults(cfg);
         QMessageBox::information(&dialog, "Settings",
             QString("Saved as default to:\n%1").arg(defaultsIniPath()));
     });
@@ -367,8 +367,9 @@ void MainWindow::showSettings() {
     if (dialog.exec() == QDialog::Accepted) {
         config = collectConfig();
         controller_->applyTrackerConfig(config);
-        controller_->setPanoramaOffsetPx(offsetBox->value());
     }
+
+    //if rejected, do nothing
 }
 
 void MainWindow::onBoxClicked(int index) {

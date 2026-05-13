@@ -13,6 +13,7 @@
 class VideoWidget : public QWidget {
     Q_OBJECT
 public:
+    //QT struct for bounding boxes
     struct PersonBox {
         cv::Rect box;
         int id;
@@ -27,6 +28,7 @@ public:
 signals:
     void boxClicked(int index);
 
+    //QT Event handlers
 protected:
     void paintEvent(QPaintEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;

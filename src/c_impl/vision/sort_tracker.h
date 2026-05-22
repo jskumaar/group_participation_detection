@@ -6,8 +6,8 @@
 
 #include <opencv2/opencv.hpp>
 
-#include "third_party/sort-cpp/sort-c++/Hungarian.h"
-#include "third_party/sort-cpp/sort-c++/KalmanTracker.h"
+#include "third_party/Hungarian.h"
+#include "third_party/KalmanTracker.h"
 
 #include "vision/360_image_process.h"
 

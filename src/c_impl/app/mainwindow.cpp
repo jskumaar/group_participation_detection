@@ -34,12 +34,11 @@ void saveDefaults(const TrackerConfig& cfg) {
     s.setValue("nms_threshold", cfg.nms_threshold);
     s.setValue("confidence_threshold", cfg.confidence_threshold);
     s.setValue("localizer_threshold", cfg.localizer_threshold);
+    s.setValue("localizer_iou_threshold", cfg.localizer_iou_threshold);
+    s.setValue("roi_zoom", cfg.roi_zoom);
     s.setValue("iou_threshold", cfg.iou_threshold);
     s.setValue("num_people", cfg.num_people);
     s.setValue("max_angle_deg", cfg.max_angle_deg);
-    s.setValue("eye_boost_knee", cfg.eye_boost_knee);
-    s.setValue("eye_boost_steepness", cfg.eye_boost_steepness);
-    s.setValue("eye_boost_max", cfg.eye_boost_max);
     s.setValue("yolo_check_interval", cfg.yolo_check_interval);
     s.setValue("head_height_ratio", cfg.head_height_ratio);
     s.setValue("yolorerun_threshold", cfg.yolorerun_threshold);
@@ -57,12 +56,11 @@ bool loadDefaultsInto(TrackerConfig& cfg) {
     cfg.nms_threshold = s.value("nms_threshold", cfg.nms_threshold).toFloat();
     cfg.confidence_threshold = s.value("confidence_threshold", cfg.confidence_threshold).toFloat();
     cfg.localizer_threshold = s.value("localizer_threshold", cfg.localizer_threshold).toFloat();
+    cfg.localizer_iou_threshold = s.value("localizer_iou_threshold", cfg.localizer_iou_threshold).toFloat();
+    cfg.roi_zoom = s.value("roi_zoom", cfg.roi_zoom).toFloat();
     cfg.iou_threshold = s.value("iou_threshold", cfg.iou_threshold).toFloat();
     cfg.num_people = s.value("num_people", cfg.num_people).toInt();
     cfg.max_angle_deg = s.value("max_angle_deg", cfg.max_angle_deg).toFloat();
-    cfg.eye_boost_knee = s.value("eye_boost_knee", cfg.eye_boost_knee).toFloat();
-    cfg.eye_boost_steepness = s.value("eye_boost_steepness", cfg.eye_boost_steepness).toFloat();
-    cfg.eye_boost_max = s.value("eye_boost_max", cfg.eye_boost_max).toFloat();
     cfg.yolo_check_interval = s.value("yolo_check_interval", cfg.yolo_check_interval).toInt();
     cfg.head_height_ratio = s.value("head_height_ratio", cfg.head_height_ratio).toFloat();
     cfg.yolorerun_threshold = s.value("yolorerun_threshold", cfg.yolorerun_threshold).toFloat();
@@ -275,6 +273,18 @@ void MainWindow::showSettings() {
     locBox->setValue(config.localizer_threshold);
     form.addRow("Localizer Threshold:", locBox);
 
+    QDoubleSpinBox *locIouBox = new QDoubleSpinBox(&dialog);
+    locIouBox->setRange(0, 1);
+    locIouBox->setSingleStep(0.01);
+    locIouBox->setValue(config.localizer_iou_threshold);
+    form.addRow("Localizer IoU Threshold:", locIouBox);
+
+    QDoubleSpinBox *roiZoomBox = new QDoubleSpinBox(&dialog);
+    roiZoomBox->setRange(1, 5);
+    roiZoomBox->setSingleStep(0.05);
+    roiZoomBox->setValue(config.roi_zoom);
+    form.addRow("ROI Zoom:", roiZoomBox);
+
     QDoubleSpinBox *iouBox = new QDoubleSpinBox(&dialog);
     iouBox->setRange(0, 1);
     iouBox->setSingleStep(0.01);
@@ -291,23 +301,6 @@ void MainWindow::showSettings() {
     maxAngleBox->setSingleStep(0.5);
     maxAngleBox->setValue(config.max_angle_deg);
     form.addRow("Looking Angle Threshold (deg):", maxAngleBox);
-
-    QDoubleSpinBox *kneeBox = new QDoubleSpinBox(&dialog);
-    kneeBox->setRange(0, 50);
-    kneeBox->setValue(config.eye_boost_knee);
-    form.addRow("Eye Boost Peak Yaw (deg):", kneeBox);
-
-    QDoubleSpinBox *steepnessBox = new QDoubleSpinBox(&dialog);
-    steepnessBox->setRange(0, 5);
-    steepnessBox->setSingleStep(0.01);
-    steepnessBox->setValue(config.eye_boost_steepness);
-    form.addRow("Eye Boost Narrowness:", steepnessBox);
-
-    QDoubleSpinBox *maxBoostBox = new QDoubleSpinBox(&dialog);
-    maxBoostBox->setRange(0, 5);
-    maxBoostBox->setSingleStep(0.1);
-    maxBoostBox->setValue(config.eye_boost_max);
-    form.addRow("Eye Boost Peak Gain:", maxBoostBox);
 
     QSpinBox *yoloIntervalBox = new QSpinBox(&dialog);
     yoloIntervalBox->setRange(1, 100);
@@ -343,12 +336,11 @@ void MainWindow::showSettings() {
         cfg.nms_threshold = nmsBox->value();
         cfg.confidence_threshold = confBox->value();
         cfg.localizer_threshold = locBox->value();
+        cfg.localizer_iou_threshold = locIouBox->value();
+        cfg.roi_zoom = roiZoomBox->value();
         cfg.iou_threshold = iouBox->value();
         cfg.num_people = numPeopleBox->value();
         cfg.max_angle_deg = maxAngleBox->value();
-        cfg.eye_boost_knee = kneeBox->value();
-        cfg.eye_boost_steepness = steepnessBox->value();
-        cfg.eye_boost_max = maxBoostBox->value();
         cfg.yolo_check_interval = yoloIntervalBox->value();
         cfg.head_height_ratio = headRatioBox->value();
         cfg.yolorerun_threshold = rerunThreshBox->value();

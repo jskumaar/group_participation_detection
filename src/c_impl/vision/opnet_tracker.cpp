@@ -5,11 +5,33 @@
 
 #include "vision/opnet_tracker.h"
 
+#include <onnxruntime_session_options_config_keys.h>
+
 #ifdef _WIN32
 #define M_PI 3.14159265358979323846
 #endif
 
 namespace fs = std::filesystem;
+
+namespace {
+
+// Lightweight models often run fastest with a small intra-op pool (2–4 threads).
+constexpr int kOrtIntraOpThreads = 4;
+constexpr int kOrtInterOpThreads = 1;
+
+Ort::SessionOptions makeCpuSessionOptions()
+{
+    Ort::SessionOptions options;
+    options.SetIntraOpNumThreads(kOrtIntraOpThreads);
+    options.SetInterOpNumThreads(kOrtInterOpThreads);
+    options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+    options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
+    options.AddConfigEntry(kOrtSessionOptionsConfigAllowIntraOpSpinning, "0");
+    options.AddConfigEntry(kOrtSessionOptionsConfigAllowInterOpSpinning, "0");
+    return options;
+}
+
+} // namespace
 
 OPNetTracker::OPNetTracker(){
     if(!initialize()) {
@@ -21,10 +43,7 @@ OPNetTracker::OPNetTracker(){
 bool OPNetTracker::initialize() {
     try{
         env = Ort::Env(ORT_LOGGING_LEVEL_WARNING, "opnet-tracker");
-        Ort::SessionOptions session_options;
-        session_options.SetInterOpNumThreads(2);
-        session_options.SetIntraOpNumThreads(1);
-        session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+        Ort::SessionOptions session_options = makeCpuSessionOptions();
         allocator_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
         fs::path exe_dir = fs::current_path().parent_path().parent_path();
 
@@ -33,6 +52,8 @@ bool OPNetTracker::initialize() {
         localizer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
         model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").wstring();
         poseestimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
+        model_path = (exe_dir / L"models" / L"L2CSNet_gaze360.onnx").wstring();
+        l2cs_estimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
         model_path = (exe_dir / L"models" / L"yolo11n.onnx").wstring();
         reframer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options), config_.confidence_threshold, config_.nms_threshold);
 #else
@@ -40,6 +61,8 @@ bool OPNetTracker::initialize() {
         localizer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
         model_path = (exe_dir / "models" / "head-pose-0.3-big-quantized.onnx").string();
         poseestimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
+        model_path = (exe_dir / "models" / "L2CSNet_gaze360.onnx").string();
+        l2cs_estimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
         model_path = (exe_dir / "models" / "yolo11n.onnx").string();
         reframer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options), config_.confidence_threshold, config_.nms_threshold);
 #endif
@@ -148,6 +171,30 @@ cv::Quatf compute_rotation_correction(const cv::Point3f& p)
         {-1.f,0.f,0.f}, p);
 }
 
+template <class T> T iou(const cv::Rect_<T>& a, const cv::Rect_<T>& b)
+{
+    const auto intersection = a & b;
+    return T(double{intersection.area()} / (a.area() + b.area() - intersection.area()));
+}
+
+template <class T> cv::Rect_<T> expand(const cv::Rect_<T>& r, T factor)
+{
+    const cv::Size_<T> new_size = { r.width * factor, r.height * factor };
+    const cv::Point_<T> new_tl = r.tl() + (cv::Point_<T>(r.width, r.height) - cv::Point_<T>(new_size.width, new_size.height)) / T(2);
+    return cv::Rect_<T>(new_tl, new_size);
+}
+
+template <class T> cv::Rect_<T> ewa_filter(const cv::Rect_<T>& last, const cv::Rect_<T>& current, T alpha)
+{
+    const auto last_center = T(0.5) * (last.tl() + last.br());
+    const auto cur_center = T(0.5) * (current.tl() + current.br());
+    const cv::Point_<T> last_size(last.width, last.height);
+    const cv::Point_<T> cur_size(current.width, current.height);
+    const cv::Point_<T> new_size = last_size + alpha * (cur_size - last_size);
+    const cv::Point_<T> new_center = last_center + alpha * (cur_center - last_center);
+    return cv::Rect_<T>(new_center - T(0.5) * new_size, cv::Size_<T>(new_size));
+}
+
 RawPose OPNetTracker::transform_to_world_pose(const cv::Quatf &face_rotation, const cv::Point2f& face_xy, const float face_size)
 {
     const cv::Vec3f face_world_pos = image_to_world(
@@ -195,22 +242,23 @@ std::optional<Pose> OPNetTracker::detect(){
         return std::nullopt;
     }
     auto face = poseestimator_->run(grayscale, rect);
+    if (!face.has_value()) {
+        return std::nullopt;
+    }
+    auto head_pose = l2cs_estimator_->run(grayscale, rect);
+    if (!head_pose.has_value()) {
+        return std::nullopt;
+    }
 
-    RawPose raw_pose = transform_to_world_pose((*face).rotation, (*face).center, (*face).size);
+    RawPose raw_pose = transform_to_world_pose(face->rotation, face->center, face->size);
 
     auto rot_mat = raw_pose.rotation.toRotMat3x3(cv::QUAT_ASSUME_UNIT);
-
-    const auto& mx = rot_mat.col(0);
     const auto& my = rot_mat.col(1);
     const auto& mz = rot_mat.col(2);
-
-    const float yaw = std::atan2(mx(2), mx(0));
-    const float pitch = -std::atan2(-mx(1), std::sqrt(mx(2)*mx(2)+mx(0)*mx(0)));
     const float roll = std::atan2(-mz(1), my(1));
-
     constexpr double rad2deg = 180/M_PI;
 
-    Pose out {rect, (int)(yaw*rad2deg), (int)(pitch*rad2deg), (int)(roll*-rad2deg), (int)(-raw_pose.position(2)*0.1f), (int)(raw_pose.position(1)*0.1f), (int)(-raw_pose.position(0)*0.1f), p};
+    Pose out {rect, (int)(head_pose->yaw_deg), (int)(head_pose->pitch_deg), (int)(roll*-rad2deg), (int)(-raw_pose.position(2)*0.1f), (int)(raw_pose.position(1)*0.1f), (int)(-raw_pose.position(0)*0.1f), p};
     return out;
 }
 

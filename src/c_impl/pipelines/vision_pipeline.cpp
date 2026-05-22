@@ -1,19 +1,8 @@
 #include "pipelines/vision_pipeline.h"
 
 #include <algorithm>
-#include <cmath>
 
 namespace pipelines {
-
-static float eyeBoost(const TrackerConfig& config, float yaw_deg) {
-    float y = std::abs(yaw_deg);
-    float max_boost = config.eye_boost_max;
-    float knee = config.eye_boost_knee;
-    float steepness = config.eye_boost_steepness;
-    float z = (y - knee) * steepness;
-    float extra = max_boost * std::exp(-z * z);
-    return 1.0f + extra;
-}
 
 VisionPipeline::VisionPipeline()
     : tracker_(),
@@ -186,13 +175,11 @@ domain::VisionFrameResult VisionPipeline::processFrame(const cv::Mat& panoFrame,
         auto pose = tracker_.run(perspective_view, static_cast<int>(track.viewer->getFOV()));
         if (!pose.has_value()) continue;
 
-        float yaw_boost = eyeBoost(tracker_.getConfig(), static_cast<float>(pose->yaw));
-
         PanoViewer::gaze g = track.viewer->addGaze(
             track.viewer->getYaw(),
             track.viewer->getPitch(),
             track.viewer->getFOV(),
-            pose->yaw * yaw_boost,
+            pose->yaw,
             pose->pitch,
             cv::Vec3f(pose->x, pose->y, pose->z));
         g.box = track.viewer->convertPerspectiveRectToEquirectangular(pose->rect, shifted.cols, shifted.rows);

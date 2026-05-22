@@ -81,8 +81,8 @@ set(SOURCES
     io/grpc_pipeline_stream_service.cpp
     io/grpc_pipeline_publisher.cpp
     pipelines/vision_pipeline.cpp
-    ${CMAKE_SOURCE_DIR}/third_party/sort-cpp/sort-c++/KalmanTracker.cpp
-    ${CMAKE_SOURCE_DIR}/third_party/sort-cpp/sort-c++/Hungarian.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/KalmanTracker.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/Hungarian.cpp
     ${RAPPORT_GENERATED_SRCS}
 )
 

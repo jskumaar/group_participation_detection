@@ -1,4 +1,10 @@
 #include "vision/model_core.h"
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <iostream>
+#include <limits>
+#include <unordered_map>
 
 cv::Rect2f unnormalize(const cv::Rect2f &r, int h, int w)
 {
@@ -324,6 +330,172 @@ std::optional<PoseEstimator::Face> PoseEstimator::run(
     return std::optional<Face>({
         rotation, rotaxis_scales_tril, outbox, center, size, center_size_cov_tril
     });
+}
+
+L2CSEstimator::L2CSEstimator(Ort::MemoryInfo &allocator_info, Ort::Session &&session)
+    : session_{std::move(session)}
+    , resized_rgb_(INPUT_IMG_HEIGHT, INPUT_IMG_WIDTH, CV_8UC3, cv::Scalar(0))
+    , input_tensor_data_(3 * INPUT_IMG_HEIGHT * INPUT_IMG_WIDTH, 0.f)
+{
+    if (session_.GetInputCount() < 1)
+        throw std::runtime_error("Invalid L2CS model: missing input tensor");
+    if (session_.GetOutputCount() < 2)
+        throw std::runtime_error("Invalid L2CS model: expected at least two output tensors");
+
+    Ort::AllocatorWithDefaultOptions allocator;
+#if ORT_API_VERSION >= 12
+    input_name_ = std::string(session_.GetInputNameAllocated(0, allocator).get());
+    output_names_[0] = std::string(session_.GetOutputNameAllocated(0, allocator).get());
+    output_names_[1] = std::string(session_.GetOutputNameAllocated(1, allocator).get());
+#else
+    input_name_ = std::string(session_.GetInputName(0, allocator));
+    output_names_[0] = std::string(session_.GetOutputName(0, allocator));
+    output_names_[1] = std::string(session_.GetOutputName(1, allocator));
+#endif
+    input_c_names_[0] = input_name_.c_str();
+    output_c_names_[0] = output_names_[0].c_str();
+    output_c_names_[1] = output_names_[1].c_str();
+
+    const std::int64_t input_shape[4] = {1, 3, INPUT_IMG_HEIGHT, INPUT_IMG_WIDTH};
+    input_val_ = Ort::Value::CreateTensor<float>(
+        allocator_info,
+        input_tensor_data_.data(),
+        input_tensor_data_.size(),
+        input_shape,
+        4);
+}
+
+std::optional<cv::Rect> L2CSEstimator::clamp_roi_to_frame(const cv::Rect2f &box, const cv::Size &frame_size) const
+{
+    if (frame_size.width <= 0 || frame_size.height <= 0)
+        return std::nullopt;
+
+    const int x0 = std::clamp(static_cast<int>(std::floor(box.x)), 0, frame_size.width - 1);
+    const int y0 = std::clamp(static_cast<int>(std::floor(box.y)), 0, frame_size.height - 1);
+    const int x1 = std::clamp(static_cast<int>(std::ceil(box.x + box.width)), 0, frame_size.width);
+    const int y1 = std::clamp(static_cast<int>(std::ceil(box.y + box.height)), 0, frame_size.height);
+
+    if (x1 <= x0 || y1 <= y0)
+        return std::nullopt;
+
+    return cv::Rect(x0, y0, x1 - x0, y1 - y0);
+}
+
+float L2CSEstimator::decode_angle_from_logits(const std::vector<float> &logits, float *max_prob_out)
+{
+    if (logits.empty())
+    {
+        if (max_prob_out)
+            *max_prob_out = 0.f;
+        return 0.f;
+    }
+
+    const float max_logit = *std::max_element(logits.begin(), logits.end());
+    float exp_sum = 0.f;
+    for (const float logit : logits)
+        exp_sum += std::exp(logit - max_logit);
+
+    if (exp_sum <= std::numeric_limits<float>::epsilon())
+    {
+        if (max_prob_out)
+            *max_prob_out = 0.f;
+        return 0.f;
+    }
+
+    float expected_bin = 0.f;
+    float max_prob = 0.f;
+    for (size_t i = 0; i < logits.size(); ++i)
+    {
+        const float prob = std::exp(logits[i] - max_logit) / exp_sum;
+        expected_bin += prob * static_cast<float>(i);
+        max_prob = std::max(max_prob, prob);
+    }
+
+    if (max_prob_out)
+        *max_prob_out = max_prob;
+    return expected_bin * 4.f - 180.f;
+}
+
+std::optional<L2CSEstimator::HeadPose> L2CSEstimator::run(const cv::Mat &frame, const cv::Rect2f &box)
+{
+    if (frame.empty())
+        return std::nullopt;
+
+    const auto roi = clamp_roi_to_frame(box, frame.size());
+    if (!roi.has_value())
+        return std::nullopt;
+
+    cv::Mat cropped = frame(*roi).clone();
+    if (cropped.empty())
+        return std::nullopt;
+
+    if (cropped.channels() == 1)
+        cv::cvtColor(cropped, resized_rgb_, cv::COLOR_GRAY2RGB);
+    else if (cropped.channels() == 3)
+        cv::cvtColor(cropped, resized_rgb_, cv::COLOR_BGR2RGB);
+    else
+        return std::nullopt;
+
+    cv::resize(resized_rgb_, resized_rgb_, {INPUT_IMG_WIDTH, INPUT_IMG_HEIGHT}, 0, 0, cv::INTER_AREA);
+
+    constexpr std::array<float, 3> mean = {0.485f, 0.456f, 0.406f};
+    constexpr std::array<float, 3> std = {0.229f, 0.224f, 0.225f};
+    const size_t plane_size = static_cast<size_t>(INPUT_IMG_WIDTH) * INPUT_IMG_HEIGHT;
+    for (int y = 0; y < INPUT_IMG_HEIGHT; ++y)
+    {
+        const auto *row = resized_rgb_.ptr<cv::Vec3b>(y);
+        for (int x = 0; x < INPUT_IMG_WIDTH; ++x)
+        {
+            for (int c = 0; c < 3; ++c)
+            {
+                const float v = static_cast<float>(row[x][c]) / 255.f;
+                input_tensor_data_[c * plane_size + static_cast<size_t>(y) * INPUT_IMG_WIDTH + x] = (v - mean[c]) / std[c];
+            }
+        }
+    }
+
+    std::vector<Ort::Value> outputs;
+    try
+    {
+        outputs = session_.Run(
+            Ort::RunOptions{nullptr},
+            input_c_names_.data(),
+            &input_val_,
+            1,
+            output_c_names_.data(),
+            output_c_names_.size());
+    }
+    catch (const Ort::Exception &)
+    {
+        return std::nullopt;
+    }
+
+    if (outputs.size() < 2 || !outputs[0].IsTensor() || !outputs[1].IsTensor())
+        return std::nullopt;
+
+    auto flatten_logits = [](const Ort::Value &tensor) -> std::vector<float> {
+        const auto info = tensor.GetTensorTypeAndShapeInfo();
+        const size_t count = info.GetElementCount();
+        if (count == 0 || info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
+            return {};
+        const float *data = tensor.GetTensorData<float>();
+        return std::vector<float>(data, data + count);
+    };
+
+    const std::vector<float> yaw_logits = flatten_logits(outputs[0]);
+    const std::vector<float> pitch_logits = flatten_logits(outputs[1]);
+    if (yaw_logits.empty() || pitch_logits.empty())
+        return std::nullopt;
+
+    float yaw_conf = 0.f;
+    float pitch_conf = 0.f;
+    const float yaw_deg = decode_angle_from_logits(yaw_logits, &yaw_conf);
+    const float pitch_deg = decode_angle_from_logits(pitch_logits, &pitch_conf);
+
+    return HeadPose{
+        yaw_deg,
+        pitch_deg,
+        0.5f * (yaw_conf + pitch_conf)};
 }
 
 void Reframer::extract_detections(std::vector<Reframer::DetectedPeople>& oResult){

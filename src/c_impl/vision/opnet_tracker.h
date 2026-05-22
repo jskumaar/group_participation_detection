@@ -39,15 +39,13 @@ struct TrackerConfig {
     float nms_threshold = 0.3f;
     float confidence_threshold = 0.5f;
     float localizer_threshold = 0.5f;
+    float localizer_iou_threshold = 0.25f;
+    float roi_zoom = 1.25f;
 
     float velocity_decay = 0.2f;
     float iou_threshold = 0.15f;
     int num_people = 3;
     float max_angle_deg = 20.0f;
-
-    float eye_boost_knee = 15.0f;
-    float eye_boost_steepness = 0.10f;
-    float eye_boost_max = 0.7f;
 
     int yolo_check_interval = 30;
     float head_height_ratio = 0.13f;
@@ -81,8 +79,11 @@ class OPNetTracker {
         Ort::MemoryInfo allocator_info{nullptr};
         std::optional<Localizer> localizer_;
         std::optional<PoseEstimator> poseestimator_;
+        std::optional<L2CSEstimator> l2cs_estimator_;
         std::optional<Reframer> reframer_;
         std::optional<cv::Rect2f> last_roi;
+        std::optional<cv::Rect2f> last_localizer_roi;
+        float last_localizer_confidence_ = 0.f;
         std::array<cv::Mat,2> downsized_original_images_ = {};
         CamIntrinsics intrinsics_;
         float resizeScales;

@@ -11,19 +11,6 @@
 
 namespace {
 
-float angleBetweenDeg(const cv::Vec3f& gazeDirection, const cv::Point3f& origin, const cv::Point3f& target) {
-    cv::Vec3f toTarget(target.x - origin.x, target.y - origin.y, target.z - origin.z);
-    const float gazeNorm = std::sqrt(gazeDirection.dot(gazeDirection));
-    const float targetNorm = std::sqrt(toTarget.dot(toTarget));
-    if (gazeNorm <= 1e-6f || targetNorm <= 1e-6f) {
-        return 180.0f;
-    }
-
-    float cosine = gazeDirection.dot(toTarget) / (gazeNorm * targetNorm);
-    cosine = std::max(-1.0f, std::min(1.0f, cosine));
-    return std::acos(cosine) * (180.0f / 3.14159265359f);
-}
-
 std::unique_ptr<io::GrpcPipelinePublisher> createGrpcStream() {
     const char* target = std::getenv("RAPPORT_GRPC_TARGET");
     const std::string endpoint = (target != nullptr && *target != '\0')
@@ -134,7 +121,6 @@ void AppController::togglePlayPause() {
         vision_.setSelectedDetections(selected, lastPanoRows_, lastPanoCols_);
 
         isSelecting_ = false;
-        emit selectingChanged(false);
 
         isPlaying_ = true;
         tickTimer_.start();
@@ -223,7 +209,6 @@ void AppController::onTick() {
 
 void AppController::enterSelectionMode(const cv::Mat& frame, const QString& reason) {
     isSelecting_ = true;
-    emit selectingChanged(true);
 
     selectionOrder_.clear();
 
@@ -271,33 +256,20 @@ void AppController::processTrackingFrame(const cv::Mat& frame) {
         return;
     }
 
-    // Interaction label + publish payload:
-    // include all directed non-self pairs and set is_looking by threshold.
     QString interactionText = "Interactions: ";
     bool found = false;
-    std::vector<domain::InteractionPair> interactions;
-    for (size_t i = 0; i < result.gazes.size(); ++i) {
-        for (size_t j = 0; j < result.gazes.size(); ++j) {
-            if (i == j) continue;
-            const float angle = angleBetweenDeg(result.gazes[i].direction, result.gazes[i].start, result.gazes[j].start);
-            const bool isLooking = angle <= vision_.getConfig().max_angle_deg;
-            interactions.push_back(domain::InteractionPair{
-                result.gazes[i].personID,
-                result.gazes[j].personID,
-                angle,
-                isLooking
-            });
-            if (isLooking) {
-                if (found) interactionText += " | ";
-                interactionText += QString("Person %1 -> Person %2").arg(result.gazes[i].personID).arg(result.gazes[j].personID);
-                found = true;
-            }
-        }
+    for (const auto& edge : result.interactions) {
+        if (!edge.is_looking) continue;
+        if (found) interactionText += " | ";
+        interactionText += QString("Person %1 -> Person %2")
+            .arg(edge.from_person_id)
+            .arg(edge.to_person_id);
+        found = true;
     }
     if (!found) interactionText += "None";
 
     if (isPlaying_) {
-        csvWriter_.writeFrame(videoSource_.currentFrame(), result.gazes, interactions);
+        csvWriter_.writeFrame(videoSource_.currentFrame(), result.gazes, result.interactions);
         csvWriter_.flush();
     }
 
@@ -316,7 +288,7 @@ void AppController::processTrackingFrame(const cv::Mat& frame) {
         domain::PipelineFrameContext publishContext;
         publishContext.frame_index = static_cast<std::uint64_t>(videoSource_.currentFrame());
         publishContext.playback_timestamp_ns = videoSource_.currentTimestampNs();
-        publishContext.interactions = std::move(interactions);
+        publishContext.interactions = result.interactions;
         pipelinePublisher_->publish(result, publishContext);
     }
 

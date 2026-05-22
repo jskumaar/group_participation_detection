@@ -15,7 +15,6 @@ public:
 
     bool open(const std::string& path);
     void close();
-    bool isOpen() const;
 
     void writeFrame(
         long frameNumber,

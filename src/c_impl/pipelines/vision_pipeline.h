@@ -6,7 +6,7 @@
 
 #include "vision/sort_tracker.h"
 #include "vision/opnet_tracker.h"
-#include "vision/360_image_process.h"
+#include "vision/gaze_bayes_mapper.h"
 
 #include "domain/types.h"
 
@@ -21,16 +21,10 @@ public:
 
     void setExpectedPeople(int n);
 
-    // Selection lifecycle
     domain::VisionFrameResult prepareSelection(const cv::Mat& panoFrame);
     void setSelectedDetections(const std::vector<cv::Rect>& selected, int panoRows, int panoCols);
-    size_t selectedCount() const { return trackedBoxes_.size(); }
 
-    // Main processing
     domain::VisionFrameResult processFrame(const cv::Mat& panoFrame, bool justSeeked);
-
-    PanoViewer& panoViewer() { return pano_viewer_; }
-    const PanoViewer& panoViewer() const { return pano_viewer_; }
 
 private:
     struct ValidDetectionUpdate {
@@ -39,7 +33,7 @@ private:
         std::vector<char> updateIndices;
     };
 
-    cv::Mat applyPanoramaOffset(const cv::Mat& panoFrame) const;
+    const cv::Mat& applyPanoramaOffset(const cv::Mat& panoFrame);
 
     ValidDetectionUpdate updateValidDetections(
         const std::vector<cv::Rect>& newDetections,
@@ -47,15 +41,16 @@ private:
 
     OPNetTracker tracker_;
     Sort object_tracker_;
-    PanoViewer pano_viewer_;
+    vision::GazeBayesMapper gaze_bayes_mapper_;
 
     std::vector<Sort::Track> tracks_;
     int yoloFrameCount_ = 0;
-    bool justSeeked_ = false;
 
     /** Per-person boxes: empty before selection, then exactly num_people; association updates in place. */
     std::vector<cv::Rect> trackedBoxes_;
+
+    /** Reused buffer for horizontal panorama roll (avoids per-frame hconcat allocation). */
+    cv::Mat shifted_pano_;
 };
 
 } // namespace pipelines
-

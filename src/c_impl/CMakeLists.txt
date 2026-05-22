@@ -1,4 +1,16 @@
 cmake_minimum_required(VERSION 3.10)
+
+# vcpkg toolchain for protobuf/gRPC — must be set before project()
+if(NOT CMAKE_TOOLCHAIN_FILE)
+  if(DEFINED ENV{VCPKG_ROOT} AND EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+    set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+        CACHE FILEPATH "vcpkg toolchain file")
+  elseif(EXISTS "C:/vcpkg/scripts/buildsystems/vcpkg.cmake")
+    set(CMAKE_TOOLCHAIN_FILE "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+        CACHE FILEPATH "vcpkg toolchain file")
+  endif()
+endif()
+
 project(tracker)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -32,6 +44,23 @@ find_package(Qt6 COMPONENTS Widgets REQUIRED)
 # VTK
 set(VTK_DIR "C:/VTK/install/lib/cmake/vtk-9.5")
 find_package(VTK REQUIRED)
+
+# Help CMake locate vcpkg-installed protobuf/gRPC (and their deps)
+set(_vcpkg_installed "")
+if(DEFINED ENV{VCPKG_ROOT} AND EXISTS "$ENV{VCPKG_ROOT}/installed/x64-windows")
+  set(_vcpkg_installed "$ENV{VCPKG_ROOT}/installed/x64-windows")
+elseif(EXISTS "C:/vcpkg/installed/x64-windows")
+  set(_vcpkg_installed "C:/vcpkg/installed/x64-windows")
+endif()
+if(_vcpkg_installed)
+  list(APPEND CMAKE_PREFIX_PATH "${_vcpkg_installed}")
+  if(EXISTS "${_vcpkg_installed}/share/protobuf/protobuf-config.cmake")
+    set(protobuf_DIR "${_vcpkg_installed}/share/protobuf" CACHE PATH "vcpkg protobuf")
+  endif()
+  if(EXISTS "${_vcpkg_installed}/share/grpc/gRPCConfig.cmake")
+    set(gRPC_DIR "${_vcpkg_installed}/share/grpc" CACHE PATH "vcpkg gRPC")
+  endif()
+endif()
 
 find_package(protobuf CONFIG REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
@@ -70,7 +99,7 @@ set(SOURCES
     vision/opnet_tracker.cpp
     vision/sort_tracker.cpp
     vision/360_image_process.cpp
-    #model_test.cpp
+    vision/gaze_bayes_mapper.cpp
     app/main.cpp
     app/app_controller.cpp
     app/mainwindow.cpp

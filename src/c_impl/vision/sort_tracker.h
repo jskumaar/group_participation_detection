@@ -17,7 +17,7 @@ public:
         std::shared_ptr<PanoViewer> viewer = nullptr;
     };
 
-    Sort(int max_age = 1000, int min_hits = 3, double iou_threshold = 0.15);
+    Sort(int max_age = 1000, double iou_threshold = 0.15);
 
     void setIOUThreshold(double threshold) { iou_threshold_ = threshold; }
 
@@ -31,9 +31,7 @@ private:
     double getIOU(const cv::Rect2f& bb_test, const cv::Rect2f& bb_gt);
 
     std::vector<KalmanTracker> trackers_;
-    int frame_count_;
     int max_age_;
-    int min_hits_;
     double iou_threshold_;
 
     int expected_num_people_ = 0;

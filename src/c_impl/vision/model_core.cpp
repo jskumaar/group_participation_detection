@@ -1,6 +1,7 @@
 #include "vision/model_core.h"
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -381,19 +382,19 @@ std::optional<cv::Rect> L2CSEstimator::clamp_roi_to_frame(const cv::Rect2f &box,
     return cv::Rect(x0, y0, x1 - x0, y1 - y0);
 }
 
-float L2CSEstimator::decode_angle_from_logits(const std::vector<float> &logits, float *max_prob_out)
+float L2CSEstimator::decode_angle_from_logits(const float *logits, size_t count, float *max_prob_out)
 {
-    if (logits.empty())
+    if (logits == nullptr || count == 0)
     {
         if (max_prob_out)
             *max_prob_out = 0.f;
         return 0.f;
     }
 
-    const float max_logit = *std::max_element(logits.begin(), logits.end());
+    const float max_logit = *std::max_element(logits, logits + count);
     float exp_sum = 0.f;
-    for (const float logit : logits)
-        exp_sum += std::exp(logit - max_logit);
+    for (size_t i = 0; i < count; ++i)
+        exp_sum += std::exp(logits[i] - max_logit);
 
     if (exp_sum <= std::numeric_limits<float>::epsilon())
     {
@@ -404,7 +405,7 @@ float L2CSEstimator::decode_angle_from_logits(const std::vector<float> &logits, 
 
     float expected_bin = 0.f;
     float max_prob = 0.f;
-    for (size_t i = 0; i < logits.size(); ++i)
+    for (size_t i = 0; i < count; ++i)
     {
         const float prob = std::exp(logits[i] - max_logit) / exp_sum;
         expected_bin += prob * static_cast<float>(i);
@@ -416,6 +417,27 @@ float L2CSEstimator::decode_angle_from_logits(const std::vector<float> &logits, 
     return expected_bin * 4.f - 180.f;
 }
 
+void L2CSEstimator::fill_input_nchw_from_rgb(const cv::Mat &rgb_uint8)
+{
+    rgb_uint8.convertTo(float_rgb_, CV_32FC3, 1.0 / 255.0);
+    cv::split(float_rgb_, ch_planes_);
+
+    static constexpr std::array<float, 3> mean = {0.485f, 0.456f, 0.406f};
+    static constexpr std::array<float, 3> stdv = {0.229f, 0.224f, 0.225f};
+    for (int c = 0; c < 3; ++c)
+        ch_planes_[c] = (ch_planes_[c] - mean[c]) / stdv[c];
+
+    const size_t plane_size = static_cast<size_t>(INPUT_IMG_WIDTH) * INPUT_IMG_HEIGHT;
+    for (int c = 0; c < 3; ++c)
+    {
+        CV_Assert(ch_planes_[c].isContinuous());
+        std::memcpy(
+            input_tensor_data_.data() + c * plane_size,
+            ch_planes_[c].ptr<float>(),
+            plane_size * sizeof(float));
+    }
+}
+
 std::optional<L2CSEstimator::HeadPose> L2CSEstimator::run(const cv::Mat &frame, const cv::Rect2f &box)
 {
     if (frame.empty())
@@ -425,34 +447,27 @@ std::optional<L2CSEstimator::HeadPose> L2CSEstimator::run(const cv::Mat &frame, 
     if (!roi.has_value())
         return std::nullopt;
 
-    cv::Mat cropped = frame(*roi).clone();
-    if (cropped.empty())
+    const cv::Mat roi_view = frame(*roi);
+    if (roi_view.empty())
         return std::nullopt;
 
-    if (cropped.channels() == 1)
-        cv::cvtColor(cropped, resized_rgb_, cv::COLOR_GRAY2RGB);
-    else if (cropped.channels() == 3)
-        cv::cvtColor(cropped, resized_rgb_, cv::COLOR_BGR2RGB);
-    else
-        return std::nullopt;
-
-    cv::resize(resized_rgb_, resized_rgb_, {INPUT_IMG_WIDTH, INPUT_IMG_HEIGHT}, 0, 0, cv::INTER_AREA);
-
-    constexpr std::array<float, 3> mean = {0.485f, 0.456f, 0.406f};
-    constexpr std::array<float, 3> std = {0.229f, 0.224f, 0.225f};
-    const size_t plane_size = static_cast<size_t>(INPUT_IMG_WIDTH) * INPUT_IMG_HEIGHT;
-    for (int y = 0; y < INPUT_IMG_HEIGHT; ++y)
+    const cv::Size model_size(INPUT_IMG_WIDTH, INPUT_IMG_HEIGHT);
+    if (roi_view.channels() == 1)
     {
-        const auto *row = resized_rgb_.ptr<cv::Vec3b>(y);
-        for (int x = 0; x < INPUT_IMG_WIDTH; ++x)
-        {
-            for (int c = 0; c < 3; ++c)
-            {
-                const float v = static_cast<float>(row[x][c]) / 255.f;
-                input_tensor_data_[c * plane_size + static_cast<size_t>(y) * INPUT_IMG_WIDTH + x] = (v - mean[c]) / std[c];
-            }
-        }
+        cv::resize(roi_view, roi_work_, model_size, 0, 0, cv::INTER_AREA);
+        cv::cvtColor(roi_work_, resized_rgb_, cv::COLOR_GRAY2RGB);
     }
+    else if (roi_view.channels() == 3)
+    {
+        cv::cvtColor(roi_view, roi_work_, cv::COLOR_BGR2RGB);
+        cv::resize(roi_work_, resized_rgb_, model_size, 0, 0, cv::INTER_AREA);
+    }
+    else
+    {
+        return std::nullopt;
+    }
+
+    fill_input_nchw_from_rgb(resized_rgb_);
 
     std::vector<Ort::Value> outputs;
     try
@@ -473,24 +488,24 @@ std::optional<L2CSEstimator::HeadPose> L2CSEstimator::run(const cv::Mat &frame, 
     if (outputs.size() < 2 || !outputs[0].IsTensor() || !outputs[1].IsTensor())
         return std::nullopt;
 
-    auto flatten_logits = [](const Ort::Value &tensor) -> std::vector<float> {
-        const auto info = tensor.GetTensorTypeAndShapeInfo();
-        const size_t count = info.GetElementCount();
-        if (count == 0 || info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
-            return {};
-        const float *data = tensor.GetTensorData<float>();
-        return std::vector<float>(data, data + count);
-    };
-
-    const std::vector<float> yaw_logits = flatten_logits(outputs[0]);
-    const std::vector<float> pitch_logits = flatten_logits(outputs[1]);
-    if (yaw_logits.empty() || pitch_logits.empty())
+    const auto yaw_info = outputs[0].GetTensorTypeAndShapeInfo();
+    const auto pitch_info = outputs[1].GetTensorTypeAndShapeInfo();
+    const size_t yaw_count = yaw_info.GetElementCount();
+    const size_t pitch_count = pitch_info.GetElementCount();
+    if (yaw_count == 0 || pitch_count == 0 ||
+        yaw_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT ||
+        pitch_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
+    {
         return std::nullopt;
+    }
+
+    const float *yaw_logits = outputs[0].GetTensorData<float>();
+    const float *pitch_logits = outputs[1].GetTensorData<float>();
 
     float yaw_conf = 0.f;
     float pitch_conf = 0.f;
-    const float yaw_deg = decode_angle_from_logits(yaw_logits, &yaw_conf);
-    const float pitch_deg = decode_angle_from_logits(pitch_logits, &pitch_conf);
+    const float yaw_deg = decode_angle_from_logits(yaw_logits, yaw_count, &yaw_conf);
+    const float pitch_deg = decode_angle_from_logits(pitch_logits, pitch_count, &pitch_conf);
 
     return HeadPose{
         yaw_deg,
@@ -566,9 +581,15 @@ Reframer::Reframer(Ort::MemoryInfo &allocator_info,
 std::vector<Reframer::DetectedPeople> Reframer::run(const cv::Mat &frame)
 {
     auto p = input_mat_.ptr(0);
-    cv::Mat temp_blob;
-    cv::dnn::blobFromImage(frame, temp_blob, 1/255.0, cv::Size(INPUT_IMG_WIDTH, INPUT_IMG_HEIGHT), cv::Scalar(), false, false);
-    temp_blob.copyTo(input_mat_);
+    cv::dnn::blobFromImage(
+        frame,
+        input_mat_,
+        1.0 / 255.0,
+        cv::Size(INPUT_IMG_WIDTH, INPUT_IMG_HEIGHT),
+        cv::Scalar(),
+        false,
+        false,
+        CV_32F);
     assert (input_mat_.ptr(0) == p);
     p = output_mat_.ptr(0);
     session_.Run(Ort::RunOptions{nullptr},

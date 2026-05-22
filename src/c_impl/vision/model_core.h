@@ -89,7 +89,8 @@ class L2CSEstimator
 
     private:
         std::optional<cv::Rect> clamp_roi_to_frame(const cv::Rect2f &box, const cv::Size &frame_size) const;
-        static float decode_angle_from_logits(const std::vector<float> &logits, float *max_prob_out);
+        static float decode_angle_from_logits(const float *logits, size_t count, float *max_prob_out);
+        void fill_input_nchw_from_rgb(const cv::Mat &rgb_uint8);
 
         inline static constexpr int INPUT_IMG_WIDTH = 448;
         inline static constexpr int INPUT_IMG_HEIGHT = 448;
@@ -99,6 +100,9 @@ class L2CSEstimator
         std::array<const char *, 2> output_c_names_{};
         std::array<const char *, 1> input_c_names_{};
         cv::Mat resized_rgb_;
+        cv::Mat roi_work_;
+        cv::Mat float_rgb_;
+        std::array<cv::Mat, 3> ch_planes_{};
         std::vector<float> input_tensor_data_;
         Ort::Value input_val_{nullptr};
 };

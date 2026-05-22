@@ -6,10 +6,20 @@
 #pragma once
 
 #include <opencv2/opencv.hpp>
-#include <iostream>
+#include <opencv2/core/quaternion.hpp>
 #include <cmath>
 #include <deque>
 #include <vector>
+
+namespace vision {
+
+/** Unit direction from yaw/pitch (radians); forward = (0,0,1) at zero. Used by PanoViewer. */
+cv::Vec3f dir_from_yaw_pitch(float yaw_rad, float pitch_rad);
+
+/** Yaw/pitch (degrees) from R's forward column (col 2), matching dir_from_yaw_pitch. */
+void yaw_pitch_deg_from_rot_mat(const cv::Matx33f &R, float &yaw_deg, float &pitch_deg);
+
+} // namespace vision
 
 class PanoViewer{
     public:
@@ -18,6 +28,7 @@ class PanoViewer{
             cv::Vec3f direction;
             int personID;
             cv::Rect2f box;
+            cv::Rect2f box_projected;
         };
 
         PanoViewer();
@@ -33,15 +44,10 @@ class PanoViewer{
         int getOutputWidth() const { return output_width; }
         int getOutputHeight() const { return output_height; }
 
-        void setMaxAngle(float angle_deg) { max_angle_threshold = angle_deg; }
-
         float computeFOVForPersonBox(const cv::Rect& box, int pano_height, int h_star_pixels, float r_head = 0.15f, float deg_min = 20.f, float deg_max = 110.f) const;
 
         gaze addGaze(float cam_yaw, float cam_pitch, float cam_fov, float pose_yaw, float pose_pitch, cv::Vec3f position);
         cv::Rect convertPerspectiveRectToEquirectangular(const cv::Rect& perspective_box, int pano_width, int pano_height) const;
-
-        void gaze_analysis(std::vector<gaze>& gazes);
-        bool isLookingAt(PanoViewer::gaze gaze, cv::Point3f facePos, float maxAngleDeg);
 
     private:
         cv::Point2f sphericalToEquirectangular(float theta, float phi, int pano_width, int pano_height);
@@ -50,8 +56,6 @@ class PanoViewer{
         float pitch;
         float fov;
         bool needs_rebuild;
-
-        float max_angle_threshold = 20.0f;
 
         const int output_width = 640;
         const int output_height = 480;
@@ -62,6 +66,7 @@ class PanoViewer{
         const float RAD_TO_DEG = 180.0f / PI;
 
         cv::Mat map_x, map_y;
+        cv::Mat perspective_output_;
         float cached_yaw = -999.0f;
         float cached_pitch = -999.0f;
         float cached_fov = -999.0f;

@@ -4,58 +4,48 @@
 
 namespace pipelines {
 
-VisionPipeline::VisionPipeline()
-    : tracker_(),
-      object_tracker_(),
-      pano_viewer_() {}
+VisionPipeline::VisionPipeline() = default;
 
 void VisionPipeline::setConfig(const TrackerConfig& cfg) {
     tracker_.setConfig(cfg);
     object_tracker_.setIOUThreshold(cfg.iou_threshold);
     object_tracker_.setNumPeople(cfg.num_people);
     KalmanTracker::decay_velocity_factor = cfg.velocity_decay;
-    pano_viewer_.setMaxAngle(cfg.max_angle_deg);
 }
 
 void VisionPipeline::setExpectedPeople(int n) {
     object_tracker_.setNumPeople(n);
 }
 
-cv::Mat VisionPipeline::applyPanoramaOffset(const cv::Mat& panoFrame) const {
+const cv::Mat& VisionPipeline::applyPanoramaOffset(const cv::Mat& panoFrame) {
     const int panoramaOffset = tracker_.getConfig().panorama_offset_px;
     if (panoramaOffset == 0) return panoFrame;
-    int w = panoFrame.cols;
-    int h = panoFrame.rows;
+    const int w = panoFrame.cols;
+    const int h = panoFrame.rows;
     int shift = panoramaOffset % w;
     if (shift < 0) shift += w;
     if (shift == 0) return panoFrame;
 
-    cv::Mat result;
-    cv::Mat left_part = panoFrame(cv::Rect(w - shift, 0, shift, h));
-    cv::Mat right_part = panoFrame(cv::Rect(0, 0, w - shift, h));
-    cv::hconcat(left_part, right_part, result);
-    return result;
+    if (shifted_pano_.rows != h || shifted_pano_.cols != w || shifted_pano_.type() != panoFrame.type())
+        shifted_pano_.create(h, w, panoFrame.type());
+
+    panoFrame(cv::Rect(w - shift, 0, shift, h)).copyTo(shifted_pano_(cv::Rect(0, 0, shift, h)));
+    panoFrame(cv::Rect(0, 0, w - shift, h)).copyTo(shifted_pano_(cv::Rect(shift, 0, w - shift, h)));
+    return shifted_pano_;
 }
 
 domain::VisionFrameResult VisionPipeline::prepareSelection(const cv::Mat& panoFrame) {
     domain::VisionFrameResult out;
 
-    if (panoFrame.empty()) {
-        out.statusText = "Empty frame.";
-        return out;
-    }
-    if (panoFrame.cols != panoFrame.rows * 2) {
-        out.statusText = "Panorama frame is not a valid size.";
-        return out;
-    }
+    if (panoFrame.empty()) return out;
+    if (panoFrame.cols != panoFrame.rows * 2) return out;
 
-    cv::Mat shifted = applyPanoramaOffset(panoFrame);
+    const cv::Mat& shifted = applyPanoramaOffset(panoFrame);
     std::vector<cv::Rect> raw_people = tracker_.run_yolo(shifted);
 
     out.yoloDetections = raw_people;
     out.yoloActive = true;
     out.requestSelection = true;
-    out.statusText = "Selection required.";
     return out;
 }
 
@@ -114,12 +104,9 @@ VisionPipeline::ValidDetectionUpdate VisionPipeline::updateValidDetections(
 domain::VisionFrameResult VisionPipeline::processFrame(const cv::Mat& panoFrame, bool justSeeked) {
     domain::VisionFrameResult out;
     if (panoFrame.empty()) return out;
-    if (panoFrame.cols != panoFrame.rows * 2) {
-        out.statusText = "Panorama frame is not a valid size.";
-        return out;
-    }
+    if (panoFrame.cols != panoFrame.rows * 2) return out;
 
-    cv::Mat shifted = applyPanoramaOffset(panoFrame);
+    const cv::Mat& shifted = applyPanoramaOffset(panoFrame);
 
     yoloFrameCount_++;
     bool interval_check = (yoloFrameCount_ % (int)tracker_.getConfig().yolo_check_interval == 0);
@@ -147,7 +134,6 @@ domain::VisionFrameResult VisionPipeline::processFrame(const cv::Mat& panoFrame,
                 raw_people.size() >= (size_t)num_people) {
                 out.yoloDetections = raw_people;
                 out.requestSelection = true;
-                out.statusText = "Tracking lost: please re-select people.";
                 return out;
             }
             //if there are fewer matched slots than num_people, 
@@ -179,34 +165,25 @@ domain::VisionFrameResult VisionPipeline::processFrame(const cv::Mat& panoFrame,
             track.viewer->getYaw(),
             track.viewer->getPitch(),
             track.viewer->getFOV(),
-            pose->yaw,
-            pose->pitch,
-            cv::Vec3f(pose->x, pose->y, pose->z));
+            static_cast<float>(pose->yaw),
+            static_cast<float>(pose->pitch),
+            cv::Vec3f(static_cast<float>(pose->x),
+                      static_cast<float>(pose->y),
+                      static_cast<float>(pose->z)));
+        g.box_projected = pose->rect;
         g.box = track.viewer->convertPerspectiveRectToEquirectangular(pose->rect, shifted.cols, shifted.rows);
         gazes.emplace_back(g);
-        perspective_view.release();
     }
 
-    if (justSeeked) object_tracker_.resetTrackerVelocities();
+    if (justSeeked) {
+        object_tracker_.resetTrackerVelocities();
+        gaze_bayes_mapper_.reset();
+    }
     gazes = object_tracker_.update(gazes);
     if (justSeeked) object_tracker_.resetTrackerVelocities();
 
     out.gazes = gazes;
-
-    for (const auto& g : gazes) {
-        domain::OverlayBox b;
-        b.box = g.box;
-        b.id = g.personID;
-        b.color_bgr = 0x00FF00;
-        out.overlays.push_back(b);
-    }
-    for (const auto& r : out.yoloDetections) {
-        domain::OverlayBox b;
-        b.box = r;
-        b.id = -1;
-        b.color_bgr = 0x0000FF;
-        out.overlays.push_back(b);
-    }
+    out.interactions = gaze_bayes_mapper_.infer(out.gazes, tracker_.getConfig().gaze_bayes);
 
     return out;
 }

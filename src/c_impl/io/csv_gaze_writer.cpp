@@ -22,10 +22,6 @@ void CsvGazeWriter::close() {
     if (file_.is_open()) file_.close();
 }
 
-bool CsvGazeWriter::isOpen() const {
-    return file_.is_open();
-}
-
 void CsvGazeWriter::writeFrame(
     long frameNumber,
     const std::vector<PanoViewer::gaze>& gazes,

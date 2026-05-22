@@ -34,11 +34,15 @@ void saveDefaults(const TrackerConfig& cfg) {
     s.setValue("nms_threshold", cfg.nms_threshold);
     s.setValue("confidence_threshold", cfg.confidence_threshold);
     s.setValue("localizer_threshold", cfg.localizer_threshold);
-    s.setValue("localizer_iou_threshold", cfg.localizer_iou_threshold);
     s.setValue("roi_zoom", cfg.roi_zoom);
     s.setValue("iou_threshold", cfg.iou_threshold);
     s.setValue("num_people", cfg.num_people);
-    s.setValue("max_angle_deg", cfg.max_angle_deg);
+    s.setValue("gaze_sigma_x_deg", cfg.gaze_bayes.sigma_x_deg);
+    s.setValue("gaze_sigma_y_deg", cfg.gaze_bayes.sigma_y_deg);
+    s.setValue("gaze_omega_base", cfg.gaze_bayes.omega_base);
+    s.setValue("gaze_omega_motion", cfg.gaze_bayes.omega_motion);
+    s.setValue("gaze_omega_null", cfg.gaze_bayes.omega_null);
+    s.setValue("gaze_likelihood_null_baseline", cfg.gaze_bayes.likelihood_null_baseline);
     s.setValue("yolo_check_interval", cfg.yolo_check_interval);
     s.setValue("head_height_ratio", cfg.head_height_ratio);
     s.setValue("yolorerun_threshold", cfg.yolorerun_threshold);
@@ -56,11 +60,16 @@ bool loadDefaultsInto(TrackerConfig& cfg) {
     cfg.nms_threshold = s.value("nms_threshold", cfg.nms_threshold).toFloat();
     cfg.confidence_threshold = s.value("confidence_threshold", cfg.confidence_threshold).toFloat();
     cfg.localizer_threshold = s.value("localizer_threshold", cfg.localizer_threshold).toFloat();
-    cfg.localizer_iou_threshold = s.value("localizer_iou_threshold", cfg.localizer_iou_threshold).toFloat();
     cfg.roi_zoom = s.value("roi_zoom", cfg.roi_zoom).toFloat();
     cfg.iou_threshold = s.value("iou_threshold", cfg.iou_threshold).toFloat();
     cfg.num_people = s.value("num_people", cfg.num_people).toInt();
-    cfg.max_angle_deg = s.value("max_angle_deg", cfg.max_angle_deg).toFloat();
+    cfg.gaze_bayes.sigma_x_deg = s.value("gaze_sigma_x_deg", cfg.gaze_bayes.sigma_x_deg).toFloat();
+    cfg.gaze_bayes.sigma_y_deg = s.value("gaze_sigma_y_deg", cfg.gaze_bayes.sigma_y_deg).toFloat();
+    cfg.gaze_bayes.omega_base = s.value("gaze_omega_base", cfg.gaze_bayes.omega_base).toFloat();
+    cfg.gaze_bayes.omega_motion = s.value("gaze_omega_motion", cfg.gaze_bayes.omega_motion).toFloat();
+    cfg.gaze_bayes.omega_null = s.value("gaze_omega_null", cfg.gaze_bayes.omega_null).toFloat();
+    cfg.gaze_bayes.likelihood_null_baseline =
+        s.value("gaze_likelihood_null_baseline", cfg.gaze_bayes.likelihood_null_baseline).toFloat();
     cfg.yolo_check_interval = s.value("yolo_check_interval", cfg.yolo_check_interval).toInt();
     cfg.head_height_ratio = s.value("head_height_ratio", cfg.head_height_ratio).toFloat();
     cfg.yolorerun_threshold = s.value("yolorerun_threshold", cfg.yolorerun_threshold).toFloat();
@@ -273,12 +282,6 @@ void MainWindow::showSettings() {
     locBox->setValue(config.localizer_threshold);
     form.addRow("Localizer Threshold:", locBox);
 
-    QDoubleSpinBox *locIouBox = new QDoubleSpinBox(&dialog);
-    locIouBox->setRange(0, 1);
-    locIouBox->setSingleStep(0.01);
-    locIouBox->setValue(config.localizer_iou_threshold);
-    form.addRow("Localizer IoU Threshold:", locIouBox);
-
     QDoubleSpinBox *roiZoomBox = new QDoubleSpinBox(&dialog);
     roiZoomBox->setRange(1, 5);
     roiZoomBox->setSingleStep(0.05);
@@ -296,11 +299,41 @@ void MainWindow::showSettings() {
     numPeopleBox->setValue(config.num_people);
     form.addRow("Num People:", numPeopleBox);
 
-    QDoubleSpinBox *maxAngleBox = new QDoubleSpinBox(&dialog);
-    maxAngleBox->setRange(1, 180);
-    maxAngleBox->setSingleStep(0.5);
-    maxAngleBox->setValue(config.max_angle_deg);
-    form.addRow("Looking Angle Threshold (deg):", maxAngleBox);
+    QDoubleSpinBox *sigmaXBox = new QDoubleSpinBox(&dialog);
+    sigmaXBox->setRange(1, 90);
+    sigmaXBox->setSingleStep(0.5);
+    sigmaXBox->setValue(config.gaze_bayes.sigma_x_deg);
+    form.addRow("Gaze sigma X (deg):", sigmaXBox);
+
+    QDoubleSpinBox *sigmaYBox = new QDoubleSpinBox(&dialog);
+    sigmaYBox->setRange(1, 90);
+    sigmaYBox->setSingleStep(0.5);
+    sigmaYBox->setValue(config.gaze_bayes.sigma_y_deg);
+    form.addRow("Gaze sigma Y (deg):", sigmaYBox);
+
+    QDoubleSpinBox *omegaBaseBox = new QDoubleSpinBox(&dialog);
+    omegaBaseBox->setRange(-10, 10);
+    omegaBaseBox->setSingleStep(0.1);
+    omegaBaseBox->setValue(config.gaze_bayes.omega_base);
+    form.addRow("Gaze omega base:", omegaBaseBox);
+
+    QDoubleSpinBox *omegaMotionBox = new QDoubleSpinBox(&dialog);
+    omegaMotionBox->setRange(0, 10);
+    omegaMotionBox->setSingleStep(0.1);
+    omegaMotionBox->setValue(config.gaze_bayes.omega_motion);
+    form.addRow("Gaze omega motion:", omegaMotionBox);
+
+    QDoubleSpinBox *omegaNullBox = new QDoubleSpinBox(&dialog);
+    omegaNullBox->setRange(-10, 10);
+    omegaNullBox->setSingleStep(0.1);
+    omegaNullBox->setValue(config.gaze_bayes.omega_null);
+    form.addRow("Gaze omega null:", omegaNullBox);
+
+    QDoubleSpinBox *nullLikelihoodBox = new QDoubleSpinBox(&dialog);
+    nullLikelihoodBox->setRange(0.001, 1.0);
+    nullLikelihoodBox->setSingleStep(0.01);
+    nullLikelihoodBox->setValue(config.gaze_bayes.likelihood_null_baseline);
+    form.addRow("Null likelihood baseline:", nullLikelihoodBox);
 
     QSpinBox *yoloIntervalBox = new QSpinBox(&dialog);
     yoloIntervalBox->setRange(1, 100);
@@ -336,11 +369,15 @@ void MainWindow::showSettings() {
         cfg.nms_threshold = nmsBox->value();
         cfg.confidence_threshold = confBox->value();
         cfg.localizer_threshold = locBox->value();
-        cfg.localizer_iou_threshold = locIouBox->value();
         cfg.roi_zoom = roiZoomBox->value();
         cfg.iou_threshold = iouBox->value();
         cfg.num_people = numPeopleBox->value();
-        cfg.max_angle_deg = maxAngleBox->value();
+        cfg.gaze_bayes.sigma_x_deg = sigmaXBox->value();
+        cfg.gaze_bayes.sigma_y_deg = sigmaYBox->value();
+        cfg.gaze_bayes.omega_base = omegaBaseBox->value();
+        cfg.gaze_bayes.omega_motion = omegaMotionBox->value();
+        cfg.gaze_bayes.omega_null = omegaNullBox->value();
+        cfg.gaze_bayes.likelihood_null_baseline = nullLikelihoodBox->value();
         cfg.yolo_check_interval = yoloIntervalBox->value();
         cfg.head_height_ratio = headRatioBox->value();
         cfg.yolorerun_threshold = rerunThreshBox->value();

@@ -92,4 +92,7 @@ class OPNetTracker {
 
         inline static constexpr int INPUT_IMG_WIDTH = 640;
         inline static constexpr int INPUT_IMG_HEIGHT = 640;
+
+        std::optional<cv::Rect2f> last_roi_;
+        std::optional<cv::Rect2f> last_localizer_roi_;
 };

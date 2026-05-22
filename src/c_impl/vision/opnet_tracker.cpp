@@ -43,11 +43,39 @@
          -mx(1),
          std::sqrt(mx(2) * mx(2) + mx(0) * mx(0)));
      constexpr float kRadToDeg = 180.f / static_cast<float>(M_PI);
-     yaw_deg = yaw * kRadToDeg;
-     pitch_deg = pitch * kRadToDeg;
- }
- 
- } // namespace
+    yaw_deg = yaw * kRadToDeg;
+    pitch_deg = pitch * kRadToDeg;
+}
+
+/** Intersection over union. Measures the match between two bounding boxes (0 to 1). */
+template <class T>
+T iou(const cv::Rect_<T>& a, const cv::Rect_<T>& b)
+{
+    auto intersection = a & b;
+    double union_area = a.area() + b.area() - intersection.area();
+    if (union_area <= 0) return T(0);
+    return static_cast<T>(intersection.area() / union_area);
+}
+
+/** Exponentially Weighted Average (EWA) filter to smooth the bounding box across frames. */
+template <class T>
+cv::Rect_<T> ewa_filter(const cv::Rect_<T>& last, const cv::Rect_<T>& current, float alpha)
+{
+    const cv::Point_<T> last_center(last.x + last.width / T(2), last.y + last.height / T(2));
+    const cv::Point_<T> cur_center(current.x + current.width / T(2), current.y + current.height / T(2));
+
+    const T new_width = last.width + alpha * (current.width - last.width);
+    const T new_height = last.height + alpha * (current.height - last.height);
+
+    const cv::Point_<T> new_center(
+        last_center.x + alpha * (cur_center.x - last_center.x),
+        last_center.y + alpha * (cur_center.y - last_center.y)
+    );
+
+    return cv::Rect_<T>(new_center.x - new_width / T(2), new_center.y - new_height / T(2), new_width, new_height);
+}
+
+} // namespace
  
  OPNetTracker::OPNetTracker()
      : yolo_net_input_(INPUT_IMG_HEIGHT, INPUT_IMG_WIDTH, CV_8UC3, cv::Scalar(0))
@@ -238,24 +266,51 @@
      intrinsics_ = make_intrinsics(frame, fov);
      return detect();
  }
- std::optional<Pose> OPNetTracker::detect(){
-    auto [p, rect] = localizer_->run(grayscale);
-    if(p < config_.localizer_threshold){
-        needs_yolo_update = true;
-        return std::nullopt;
-    }
+std::optional<Pose> OPNetTracker::detect(){
+   if (!last_localizer_roi_ || !last_roi_ || iou(*last_localizer_roi_, *last_roi_) < 0.25f) {
+       
+       qDebug() << "[OPNet] no tracked face, running localizer";
+       auto [p, rect] = localizer_->run(grayscale);
 
-    const cv::Rect localizer_box(
-        static_cast<int>(rect.x),
-        static_cast<int>(rect.y),
-        static_cast<int>(rect.width),
-        static_cast<int>(rect.height));
-    auto face = poseestimator_->run(grayscale, localizer_box);
-    if (!face.has_value()) {
-        return std::nullopt;
-    }
+       if (last_roi_ && iou(rect, *last_roi_) >= 0.25f && p > config_.localizer_threshold) {
+           last_localizer_roi_ = rect;
+       }
+       else if (p > config_.localizer_threshold && rect.height > 32 && rect.width > 32) {
+           last_localizer_roi_ = rect;
+           last_roi_ = rect;
+       }
+       else {
+           last_roi_.reset();
+           last_localizer_roi_.reset();
+       }
+   }
 
-    const cv::Rect2f l2cs_roi = expand_roi_centered(face->box, config_.roi_zoom);
+   if (!last_roi_) {
+       needs_yolo_update = true;
+       return std::nullopt;
+   }
+
+   const cv::Rect current_roi(
+       static_cast<int>(last_roi_->x),
+       static_cast<int>(last_roi_->y),
+       static_cast<int>(last_roi_->width),
+       static_cast<int>(last_roi_->height)
+   );
+
+   auto face = poseestimator_->run(grayscale, current_roi);
+   if (!face.has_value()) {
+       last_roi_.reset();
+       needs_yolo_update = true;
+       return std::nullopt;
+   }
+
+   constexpr float kPoseRoiZoom = 1.1f;
+   constexpr float kRoiFilterAlpha = 0.5f;
+
+   cv::Rect2f new_roi = expand_roi_centered(face->box, kPoseRoiZoom);
+   last_roi_ = ewa_filter(*last_roi_, new_roi, kRoiFilterAlpha);
+
+   const cv::Rect2f l2cs_roi = expand_roi_centered(face->box, config_.roi_zoom);
     auto gaze = l2cs_estimator_->run(grayscale, l2cs_roi);
     if (!gaze.has_value()) {
         return std::nullopt;
@@ -317,14 +372,7 @@
         combined_pitch_deg);
     // ---------------------------------
 
-    qDebug() << "[OPNet] poseestimator(col0) yaw_deg=" << head_yaw_deg
-             << "pitch_deg=" << head_pitch_deg
-             << "l2cs raw yaw_deg=" << gaze->yaw_deg
-             << "l2cs comp yaw_deg=" << compensated_gaze_yaw_deg
-             << "confidence=" << gaze->confidence
-             << "eye_weight=" << eye_weight
-             << "combined yaw_deg=" << combined_yaw_deg
-             << "pitch_deg=" << combined_pitch_deg;
+    qDebug() << "[OPNet] poseestimator(col0) yaw_deg=" << head_yaw_deg;
 
     Pose out {
         face->box,

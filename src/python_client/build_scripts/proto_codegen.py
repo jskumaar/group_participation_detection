@@ -6,10 +6,10 @@ from pathlib import Path
 
 
 def main() -> int:
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[3]
     proto_dir = root / "src" / "c_impl" / "proto"
     proto_file = proto_dir / "rapport.proto"
-    output_dir = Path(__file__).resolve().parent / "generated"
+    output_dir = Path(__file__).resolve().parent.parent / "generated"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     cmd = [

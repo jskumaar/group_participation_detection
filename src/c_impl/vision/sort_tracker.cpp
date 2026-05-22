@@ -115,7 +115,14 @@ std::vector<PanoViewer::gaze> Sort::update(const std::vector<PanoViewer::gaze>& 
         g.personID = tracker.m_id + 1;
         result_gazes.push_back(g);
     }
+    
+    //future problem: if two people are unmatched by SORT in the same frame,
+    //they will be re-assigned pretty much arbitrarily
 
+
+
+    //remove trackers from reassign_map_ and trackers_ that have 
+    //not been updated for too long
     for (auto it = trackers_.begin(); it != trackers_.end();) {
         if (it->m_time_since_update > max_age_) {
             reassign_map_.erase(it->m_id + 1);
@@ -124,11 +131,11 @@ std::vector<PanoViewer::gaze> Sort::update(const std::vector<PanoViewer::gaze>& 
             ++it;
         }
     }
-
     if (expected_num_people_ > 0) {
         std::set<int> active_display_ids;
         std::vector<PanoViewer::gaze*> need_reassignment;
-
+        //collect display ids from current fram detections after SORT 
+        //that are within the expected number of people
         for (auto& gaze : result_gazes) {
             if (gaze.personID <= expected_num_people_) {
                 active_display_ids.insert(gaze.personID);
@@ -139,17 +146,21 @@ std::vector<PanoViewer::gaze> Sort::update(const std::vector<PanoViewer::gaze>& 
             if (gaze.personID <= expected_num_people_) continue;
 
             int internal_id = gaze.personID;
-
+            //if the person id's from current frame are  in the reassign_map_, 
             if (reassign_map_.count(internal_id)) {
                 int mapped_id = reassign_map_[internal_id];
+                //if the mapped id is mapped to an existing display id,
+                //add to need_reassignment
                 if (active_display_ids.count(mapped_id)) {
                     reassign_map_.erase(internal_id);
                     need_reassignment.push_back(&gaze);
-                } else {
+                } else { //remap id to mapped id
                     gaze.personID = mapped_id;
                     active_display_ids.insert(mapped_id);
                 }
             } else {
+                //if the person id's from current frame are not in the reassign_map_,
+                //add to need_reassignment
                 need_reassignment.push_back(&gaze);
             }
         }
@@ -157,7 +168,7 @@ std::vector<PanoViewer::gaze> Sort::update(const std::vector<PanoViewer::gaze>& 
         for (auto* gaze : need_reassignment) {
             int internal_id = gaze->personID;
             int assigned_id = -1;
-
+            //find the first available display id and map it to the person id
             for (int i = 1; i <= expected_num_people_; ++i) {
                 if (active_display_ids.find(i) == active_display_ids.end()) {
                     assigned_id = i;

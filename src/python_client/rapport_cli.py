@@ -3,8 +3,29 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Optional
 
 from rapport_server import serve_forever
+
+
+class MismatchDurationGuard:
+    def __init__(self, max_mismatch_seconds: float = 2.0) -> None:
+        self.max_mismatch_ns = int(max(0.1, max_mismatch_seconds) * 1e9)
+        self._mismatch_start_ns: Optional[int] = None
+
+    def update(self, source_timestamp_ns: int, is_mismatch: bool) -> bool:
+        """
+        Returns True when mismatch duration exceeds configured threshold.
+        """
+        if not is_mismatch:
+            self._mismatch_start_ns = None
+            return False
+
+        if self._mismatch_start_ns is None:
+            self._mismatch_start_ns = int(source_timestamp_ns)
+            return False
+
+        return int(source_timestamp_ns) - self._mismatch_start_ns > self.max_mismatch_ns
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -45,14 +66,16 @@ def cmd_replay(args: argparse.Namespace) -> int:
         if duration_ns < window_ns:
             continue
 
-        start_ns = int(entry.get("start_playback_timestamp_ns", entry.get("start_source_timestamp_ns", 0)))
-        end_ns = int(entry.get("end_playback_timestamp_ns", entry.get("end_source_timestamp_ns", 0)))
+        start_ns = int(entry.get("start_playback_timestamp_ns", 0))
+        end_ns = int(entry.get("end_playback_timestamp_ns", 0))
         start_s = start_ns / 1e9
         end_s = end_ns / 1e9
         duration_s = duration_ns / 1e9
+        labels = entry.get("labels") or []
+        labels_text = ",".join(labels) if labels else "-"
         print(
             "t={start:.3f}s-{end:.3f}s (dur={dur:.3f}s) frames={fs}-{fe} "
-            "edge {src}->{dst} angle_deg={angle:.2f} expected={expected}".format(
+            "edge {src}->{dst} labels={labels}".format(
                 start=start_s,
                 end=end_s,
                 dur=duration_s,
@@ -60,8 +83,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
                 fe=entry.get("end_frame_index", -1),
                 src=entry.get("from", -1),
                 dst=entry.get("to", -1),
-                angle=float(entry.get("angle_deg", 0.0)),
-                expected=bool(entry.get("expected", False)),
+                labels=labels_text,
             )
         )
         shown += 1
@@ -77,29 +99,29 @@ def cmd_replay(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Rapport bridge CLI")
+    parser = argparse.ArgumentParser(description="Gaze Debugger CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     serve_parser = subparsers.add_parser("serve", help="Run Python gRPC analyzer client")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=50051)
     serve_parser.add_argument(
-        "--ground-truth-csv",
+        "--ground-truth",
         help=(
             "CSV/TSV with columns: start_time, end_time, label_type "
             "(e.g. P1GazeP2, P3GazeRobot). Required to log mismatches."
         ),
     )
     serve_parser.add_argument(
-        "--person-id-map",
+        "--id-map",
         help=(
             "Optional mapping from label IDs to stream person_id values, "
             "format: 1:0,2:1,3:2"
         ),
     )
     serve_parser.add_argument(
-        "--mismatch-log-dir",
-        default="logs/mismatch_logs",
+        "--log-path",
+        default="logs",
         help="Output directory for per-stream JSONL mismatch logs (report_N.jsonl)",
     )
     serve_parser.set_defaults(func=cmd_serve)

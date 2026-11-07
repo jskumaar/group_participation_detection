@@ -1,6 +1,8 @@
 #include "pipelines/vision_pipeline.h"
 
 #include <algorithm>
+#include <atomic>
+#include <future>
 
 namespace pipelines {
 
@@ -101,6 +103,27 @@ VisionPipeline::ValidDetectionUpdate VisionPipeline::updateValidDetections(
     return out;
 }
 
+std::optional<PanoViewer::gaze> VisionPipeline::estimateGaze(int workerIndex, Sort::Track& track, const cv::Mat& pano) {
+    if (!track.viewer) return std::nullopt;
+
+    cv::Mat perspective_view = track.viewer->generatePerspectiveView(pano);
+    auto pose = tracker_.run(workerIndex, perspective_view, static_cast<int>(track.viewer->getFOV()), track.face_roi);
+    if (!pose.has_value()) return std::nullopt;
+
+    PanoViewer::gaze g = track.viewer->addGaze(
+        track.viewer->getYaw(),
+        track.viewer->getPitch(),
+        track.viewer->getFOV(),
+        static_cast<float>(pose->yaw),
+        static_cast<float>(pose->pitch),
+        cv::Vec3f(static_cast<float>(pose->x),
+                  static_cast<float>(pose->y),
+                  static_cast<float>(pose->z)));
+    g.box_projected = pose->rect;
+    g.box = track.viewer->convertPerspectiveRectToEquirectangular(pose->rect, pano.cols, pano.rows);
+    return g;
+}
+
 domain::VisionFrameResult VisionPipeline::processFrame(const cv::Mat& panoFrame, bool justSeeked) {
     domain::VisionFrameResult out;
     if (panoFrame.empty()) return out;
@@ -152,27 +175,27 @@ domain::VisionFrameResult VisionPipeline::processFrame(const cv::Mat& panoFrame,
         tracker_.yolo_updated();
     }
 
-    // Pose + gaze per track
-    std::vector<PanoViewer::gaze> gazes;
-    cv::Mat perspective_view;
-    for (auto& track : tracks_) {
-        if (!track.viewer) continue;
-        perspective_view = track.viewer->generatePerspectiveView(shifted);
-        auto pose = tracker_.run(perspective_view, static_cast<int>(track.viewer->getFOV()), track.face_roi);
-        if (!pose.has_value()) continue;
+    // Pose + gaze per track, one person per worker. Each result stays in its track's slot,
+    // so the output does not depend on which worker finishes first.
+    std::vector<std::optional<PanoViewer::gaze>> trackGazes(tracks_.size());
+    std::atomic<size_t> nextTrack{0};
+    const auto processTracks = [&](int workerIndex) {
+        for (size_t i = nextTrack++; i < tracks_.size(); i = nextTrack++) {
+            trackGazes[i] = estimateGaze(workerIndex, tracks_[i], shifted);
+        }
+    };
 
-        PanoViewer::gaze g = track.viewer->addGaze(
-            track.viewer->getYaw(),
-            track.viewer->getPitch(),
-            track.viewer->getFOV(),
-            static_cast<float>(pose->yaw),
-            static_cast<float>(pose->pitch),
-            cv::Vec3f(static_cast<float>(pose->x),
-                      static_cast<float>(pose->y),
-                      static_cast<float>(pose->z)));
-        g.box_projected = pose->rect;
-        g.box = track.viewer->convertPerspectiveRectToEquirectangular(pose->rect, shifted.cols, shifted.rows);
-        gazes.emplace_back(g);
+    const int workers = std::min(OPNetTracker::kWorkerCount, static_cast<int>(tracks_.size()));
+    std::vector<std::future<void>> extraWorkers;
+    for (int workerIndex = 1; workerIndex < workers; ++workerIndex) {
+        extraWorkers.push_back(std::async(std::launch::async, processTracks, workerIndex));
+    }
+    processTracks(0);
+    for (auto& worker : extraWorkers) worker.get();
+
+    std::vector<PanoViewer::gaze> gazes;
+    for (const auto& g : trackGazes) {
+        if (g.has_value()) gazes.push_back(*g);
     }
 
     if (justSeeked) {

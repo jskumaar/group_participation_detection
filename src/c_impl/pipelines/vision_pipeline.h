@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <vector>
 
 #include <opencv2/opencv.hpp>
@@ -34,6 +35,8 @@ private:
     };
 
     const cv::Mat& applyPanoramaOffset(const cv::Mat& panoFrame);
+
+    std::optional<PanoViewer::gaze> estimateGaze(int workerIndex, Sort::Track& track, const cv::Mat& pano);
 
     ValidDetectionUpdate updateValidDetections(
         const std::vector<cv::Rect>& newDetections,

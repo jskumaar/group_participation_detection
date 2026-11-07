@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gaze Pipeline Onboarding</title>
+<meta name="description" content="An interactive guide to the group participation detection codebase: the C++ gaze pipeline in c_impl and the Python evaluation client.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%235b3fd1'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23fff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/css/site.css">
+<script>
+  try { var t = localStorage.getItem("onboard-theme"); if (t) document.documentElement.setAttribute("data-theme", t); } catch (e) {}
+</script>
+</head>
+<body>
+<div class="mobile-nav">
+  <select id="mobile-select" aria-label="Jump to section"></select>
+  <button class="btn" data-theme-toggle type="button">Dark theme</button>
+</div>
+<div class="layout">
+  <aside class="side">
+    <a class="brand" href="#start">Gaze pipeline<small>Developer onboarding</small></a>
+    <nav aria-label="Sections">
+      <div class="group">Orientation</div>
+      <a href="#start">Start here</a>
+      <a href="#setup">Get it running</a>
+      <a href="#map">System map</a>
+      <a href="#frame">One frame, start to finish</a>
+      <div class="group">Vision pipeline</div>
+      <a href="#panorama">Panorama to crop</a>
+      <a href="#gaze">Head, eyes and gaze</a>
+      <a href="#roi">Face ROI tracking</a>
+      <a href="#tracking">Keeping person IDs</a>
+      <a href="#bayes">Who is looking at whom</a>
+      <div class="group">Output and testing</div>
+      <a href="#stream">The gRPC stream</a>
+      <a href="#evaluation">Scoring against labels</a>
+      <div class="group">Reference</div>
+      <a href="#code">Code explorer</a>
+      <a href="#recipes">How do I…</a>
+      <a href="#edges">Sharp edges</a>
+      <a href="#glossary">Glossary</a>
+    </nav>
+    <button class="btn theme-btn" data-theme-toggle type="button">Dark theme</button>
+  </aside>
+
+  <main><div class="wrap">
+
+    <!-- ===================================================== START -->
+    <section id="start" class="hero">
+      <div class="eyebrow">Group participation detection</div>
+      <h1>Who is looking at whom, from one 360° camera.</h1>
+      <p class="lede">A 360° camera sits among a group of people. This project works out, frame by frame, where each person is looking and which other person that is. That gaze data is a building block for measuring how a group participates.</p>
+      <p class="prose">This guide covers the two parts you will work on: <code>src/c_impl</code>, a C++ desktop app that runs the vision pipeline, and <code>src/python_client</code>, which listens to that app and scores it against hand-made labels. The demos run the same maths as the code, so you can change an input and watch what the code would do.</p>
+      <div class="who" aria-label="Colour key">
+        <span class="chip p1"><i></i>P1</span>
+        <span class="chip p2"><i></i>P2</span>
+        <span class="chip p3"><i></i>P3</span>
+        <span class="chip"><i></i>no one (robot, table, elsewhere)</span>
+      </div>
+      <p class="note">These colours mean the same thing in every demo. All scenes here are synthetic: no study footage appears on this site.</p>
+
+      <div class="paths">
+        <a class="path" href="#setup"><strong>Day 1: run it</strong><span>Install, build, and run a real evaluation.</span></a>
+        <a class="path" href="#frame"><strong>Understand the flow</strong><span>Step one video frame through the entire system.</span></a>
+        <a class="path" href="#bayes"><strong>Understand the model</strong><span>Play with the Bayesian gaze mapper.</span></a>
+        <a class="path" href="#recipes"><strong>Change something</strong><span>Recipes for the common edits, and what breaks.</span></a>
+      </div>
+
+      <h3>The whole system in five sentences</h3>
+      <ol class="prose">
+        <li>The app reads a 360° video frame, and you pick who to track by clicking them once.</li>
+        <li>For each person it cuts a normal-looking perspective crop out of the panorama, aimed at their head.</li>
+        <li>Neural networks estimate head pose and eye gaze in that crop, which are combined into one 3D gaze ray.</li>
+        <li>A Bayesian model turns those rays into a probability that each person is looking at each other person, or at no one.</li>
+        <li>Results stream over gRPC to a Python client, which compares them with human labels and reports accuracy.</li>
+      </ol>
+    </section>
+
+    <!-- ===================================================== SETUP -->
+    <section id="setup" class="chapter">
+      <div class="eyebrow">Orientation</div>
+      <h2>Get it running</h2>
+      <p class="prose">The project targets Windows with Visual Studio 2022. Four things you need are deliberately <strong>not in git</strong> (marked below), so a clone alone will not build or run. Ask the team where the current copies live.</p>
+
+      <div class="demo">
+        <div class="demo-head"><h4>Setup checklist</h4><span class="note" id="check-count"></span>
+          <p>Your progress is saved in this browser.</p></div>
+        <div class="demo-body">
+          <label class="check"><input type="checkbox" id="c1"><span><b>Toolchain:</b> Visual Studio 2022 with the C++ desktop workload, CMake, Python 3, and Git.</span></label>
+          <label class="check"><input type="checkbox" id="c2"><span><b>OpenCV 4.x</b> at <code>C:/opencv/build</code> (this project was built with 4.12), <b>Qt 6.10.1</b> at <code>C:/Qt/6.10.1/msvc2022_64</code>, and <b>VTK 9.5</b> at <code>C:/VTK/install</code>. These paths are hard-coded in <code>CMakeLists.txt</code>, so edit that file if yours differ.
+            <p>Add the OpenCV, Qt and VTK <code>bin</code> folders to <code>PATH</code> so their DLLs are found at run time.</p></span></label>
+          <label class="check"><input type="checkbox" id="c3"><span><b>vcpkg</b> with gRPC and Protobuf: <code>vcpkg install grpc:x64-windows protobuf:x64-windows</code>. CMake finds it through <code>VCPKG_ROOT</code> or <code>C:/vcpkg</code>.</span></label>
+          <label class="check"><input type="checkbox" id="c4"><span><b>Not in git: ONNX Runtime 1.22.1.</b> Unzip the Windows x64 release so that <code>src/c_impl/onnx/include</code> and <code>src/c_impl/onnx/lib</code> exist.</span></label>
+          <label class="check"><input type="checkbox" id="c5"><span><b>Not in git: the models</b> in <code>src/c_impl/models/</code>: <code>head-localizer.onnx</code>, <code>head-pose-0.3-big-quantized.onnx</code>, <code>L2CSNet_gaze360.onnx</code> and <code>yolo11n.onnx</code>.</span></label>
+          <label class="check"><input type="checkbox" id="c6"><span><b>Not in git: test data.</b> A 360° video, <code>src/pilot.mp4</code> (2:1 aspect ratio is required), and its labels, <code>src/ground_truth.csv</code>.</span></label>
+          <label class="check"><input type="checkbox" id="c7"><span><b>Not in git: <code>tracker_settings.ini</code>.</b> The app reads tuned settings from beside <code>tracker.exe</code>. Without it you get the code defaults, which <a href="#bayes">differ from the tuned values</a>, so ask for the current file.</span></label>
+          <label class="check"><input type="checkbox" id="c8"><span><b>Copy <code>onnxruntime.dll</code></b> from <code>src/c_impl/onnx/lib</code> next to <code>tracker.exe</code> after your first build. Windows ships a different <code>onnxruntime.dll</code> in System32, and loading that one crashes the app with an access violation.</span></label>
+        </div>
+      </div>
+
+      <h3>Build the C++ app</h3>
+      <p class="prose">From PowerShell, in the repo root:</p>
+<pre class="cmd-src"><code>cd src\c_impl
+mkdir build -Force
+cd build
+cmake -G "Visual Studio 17 2022" -A x64 ..
+cmake --build . --config Release --parallel</code></pre>
+      <p class="prose">That produces <code>src/c_impl/build/Release/tracker.exe</code>. Protobuf code for C++ is generated during the build, so you never edit it by hand.</p>
+
+      <h3>Set up the Python client</h3>
+<pre class="cmd-src"><code>cd src
+pip install -r python_client\requirements.txt
+python python_client\build_scripts\proto_codegen.py</code></pre>
+      <p class="prose">The generated Python files are committed, so codegen is only needed after <code>rapport.proto</code> changes.</p>
+
+      <h3>Run an evaluation</h3>
+      <p class="prose">Use two terminals. The client can start first: it waits for the tracker.</p>
+      <p class="fig-label">Terminal 1, from <code>src</code></p>
+<pre class="cmd-src"><code>python python_client\rapport_cli.py serve --ground-truth ground_truth.csv</code></pre>
+      <p class="fig-label">Terminal 2, from <code>src\c_impl\build\Release</code></p>
+<pre class="cmd-src"><code>.\tracker.exe</code></pre>
+      <div class="callout warn">
+        <p><strong>You must start the tracker from <code>build/Release</code>.</strong> It finds models at <code>../../models</code> relative to the <em>working directory</em>, not relative to the program (<a data-ref="models_path"></a>). It also overwrites <code>gaze_analysis.csv</code> in that folder at every launch.</p>
+      </div>
+      <ol class="prose">
+        <li>Click <strong>Open Video</strong> and choose the video. YOLO draws a red box around every person it finds.</li>
+        <li>Click the people to track <strong>in the order P1, P2, P3</strong>. Boxes turn green and show the click order.</li>
+        <li>Click <strong>Start Tracking</strong>. Check that the number on each green box matches your labels. If they differ, add an ID map to the client, for example <code>--id-map 1:2,2:3,3:1</code>.</li>
+        <li>Leave the slider alone, because seeking replays or skips frames and skews the scores.</li>
+        <li>When the client says it has passed the last label, press Ctrl+C in Terminal 1. It prints the report and saves it to <code>logs/report_N.jsonl</code> and <code>logs/report_N_summary.json</code>.</li>
+      </ol>
+      <p class="prose">Unticking <strong>Show Video</strong> and <strong>Show 3D</strong> skips that drawing and makes long runs faster. To list the mistakes that lasted at least 2 seconds:</p>
+<pre class="cmd-src"><code>python python_client\rapport_cli.py replay --log-path logs\report_1.jsonl</code></pre>
+    </section>
+
+    <!-- ===================================================== MAP -->
+    <section id="map" class="chapter">
+      <div class="eyebrow">Orientation</div>
+      <h2>System map</h2>
+      <p class="prose">There are two processes. <code>tracker.exe</code> does all of the vision work and exposes a gRPC server. The Python client connects to it as a consumer. Everything in the C++ app runs on the Qt main thread, driven by a timer, except gRPC's own threads. Click any box to see what it owns.</p>
+      <div class="demo" id="demo-map"></div>
+      <div class="callout">
+        <p><strong>The main idea to hold on to:</strong> <code>AppController</code> owns the flow, <code>VisionPipeline</code> owns the per-frame vision logic, and <code>TrackerConfig</code> holds almost every tunable number. If you are lost, start in <a data-ref="process_tracking"></a> and <a data-ref="process_frame"></a>.</p>
+      </div>
+    </section>
+
+    <!-- ===================================================== FRAME -->
+    <section id="frame" class="chapter">
+      <div class="eyebrow">Orientation</div>
+      <h2>One frame, start to finish</h2>
+      <p class="prose">Every 25 ms a Qt timer fires and one video frame goes through the whole pipeline. The processing is slower than the timer, so frames take as long as they take, but none are skipped. Step through what happens and what data exists after each stage.</p>
+      <div class="demo" id="demo-walk"></div>
+
+      <h3>When does YOLO run?</h3>
+      <p class="prose">YOLO scans the whole panorama and is too slow to run on every frame. After the first click-based selection it only runs when something asks for it. This is the logic in <a data-ref="yolo_cond"></a>:</p>
+      <div data-snippet="yolo_cond"></div>
+      <div class="demo" id="demo-yolo"></div>
+    </section>
+
+    <!-- ===================================================== PANORAMA -->
+    <section id="panorama" class="chapter">
+      <div class="eyebrow">Vision pipeline</div>
+      <h2>Panorama to crop</h2>
+      <p class="prose">A 360° frame is <em>equirectangular</em>: left to right is longitude, top to bottom is latitude. Straight lines bend, and faces near the edges stretch. The face networks expect an ordinary camera image, so <code>PanoViewer</code> simulates a virtual pinhole camera per person and renders a 640×480 view.</p>
+      <p class="prose">Each person's <code>PanoViewer</code> is aimed once, when YOLO supplies a box (<a data-ref="inject"></a>). It stays fixed until the next YOLO update. Drag on the panorama, or pick a person, to see the footprint of the virtual camera and what it renders.</p>
+      <div class="demo" id="demo-pano"></div>
+      <h3>How a virtual camera is aimed</h3>
+      <div data-snippet="inject_aim"></div>
+      <ul class="prose">
+        <li><strong>Yaw</strong> comes from the box centre: <code>x / width × 360° − 180°</code>.</li>
+        <li><strong>Pitch</strong> starts at the <em>top</em> of the person box and moves down by 0.3 × FOV, so the head lands in the upper part of the crop.</li>
+        <li><strong>FOV</strong> (<a data-ref="compute_fov"></a>) assumes a head is 15% of the person's height, then chooses a zoom that makes the head roughly <code>head_height_ratio</code> of the crop height, clamped to 20°–110°. A tall box means a close person and a wider FOV.</li>
+      </ul>
+      <div class="callout">
+        <p>The rendering uses precomputed lookup tables (<code>map_x</code>, <code>map_y</code>) and <code>cv::remap</code>. They rebuild only when yaw, pitch or FOV change, so the per-frame cost is one remap per person. See <a data-ref="remap"></a>.</p>
+      </div>
+    </section>
+
+    <!-- ===================================================== GAZE -->
+    <section id="gaze" class="chapter">
+      <div class="eyebrow">Vision pipeline</div>
+      <h2>Head, eyes and gaze</h2>
+      <p class="prose">Four networks run through ONNX Runtime on the CPU. Three run on each person's crop; YOLO runs on the whole panorama. <code>detect()</code> in <a data-ref="detect"></a> connects them.</p>
+      <div class="table-scroll"><table>
+        <tr><th>Class</th><th>Model file</th><th>Input</th><th>Output</th></tr>
+        <tr><td><code>Reframer</code></td><td><code>yolo11n.onnx</code></td><td>640×640 RGB letterbox of the panorama</td><td>Person boxes (class 0)</td></tr>
+        <tr><td><code>Localizer</code></td><td><code>head-localizer.onnx</code></td><td>288×224 grayscale crop</td><td>Is a face present, and where</td></tr>
+        <tr><td><code>PoseEstimator</code></td><td><code>head-pose-0.3-big-quantized.onnx</code></td><td>Grayscale patch around the ROI</td><td>Head rotation (quaternion), position, face box</td></tr>
+        <tr><td><code>L2CSEstimator</code></td><td><code>L2CSNet_gaze360.onnx</code></td><td>448×448 colour face crop</td><td>Yaw and pitch scores over 90 bins</td></tr>
+      </table></div>
+
+      <h3>Step 1: L2CS turns bins into an angle</h3>
+      <p class="prose">L2CS does not output an angle. It scores 90 bins, each 4° wide, covering −180° to +176°. The code applies a softmax and takes the <em>expected</em> bin (<a data-ref="l2cs_decode"></a>). Its "confidence" is the highest single-bin probability, averaged over yaw and pitch. A broad, unsure distribution gives a low confidence.</p>
+      <div class="demo" id="demo-l2cs"></div>
+
+      <h3>Step 2: head and eyes are blended</h3>
+      <p class="prose">Head pose is stable but ignores the eyes. L2CS sees the eyes but gets noisy on low-quality faces. So the code keeps the head as a base and adds an eye correction scaled by confidence. Because L2CS already includes some head rotation, 40% of the head angle is subtracted first (<code>kAlpha</code>) to avoid counting it twice.</p>
+      <div class="demo" id="demo-blend"></div>
+      <div data-snippet="conf_comment"></div>
+      <p class="note">The comment in that code says 12% and 25%, but the constants are 20 and 40. The demo uses the constants, which is what runs.</p>
+
+      <h3>Step 3: crop space to world space</h3>
+      <p class="prose">This convention surprises most people: <strong>yaw 0, pitch 0 means looking straight back at the camera</strong>, not "straight ahead". The local frame is built with <em>forward</em> pointing from the person to the camera. Drag the person around the camera and try the yaw slider.</p>
+      <div class="demo" id="demo-world"></div>
+      <div data-snippet="global_gaze"></div>
+      <p class="prose">The world frame has its origin at the camera, +Y up, +Z at the panorama's centre column (yaw 0), and +X to its right. Positions are in centimetres. The pose estimator gives position in millimetres, and the code divides by 10 and truncates to an integer. Yaw and pitch are also truncated to whole degrees, so <code>Pose</code> carries ints:</p>
+      <div data-snippet="pose_struct"></div>
+    </section>
+
+    <!-- ===================================================== ROI -->
+    <section id="roi" class="chapter">
+      <div class="eyebrow">Vision pipeline</div>
+      <h2>Face ROI tracking</h2>
+      <p class="prose">The localizer is skipped when it isn't needed. Once a face has been found, the pose estimator's own face box becomes the region of interest (ROI) for the next frame, smoothed with an exponential filter. The localizer reruns only if that ROI has drifted away from where the localizer last placed it (IoU below 0.25), or if tracking was lost.</p>
+      <p class="prose">ROI coordinates only mean something inside one person's crop, so the state must be per person. This has already gone wrong once: for a while a single ROI lived on <code>OPNetTracker</code>, and each person started from the previous person's face box. Step through both versions.</p>
+      <div class="demo" id="demo-roi"></div>
+      <p class="prose">The state now lives on each <code>Sort::Track</code> (<a data-ref="sort_track"></a>). Tracks are recreated when YOLO re-aims the cameras, so the ROI resets exactly when its coordinates stop being valid.</p>
+      <div data-snippet="face_roi"></div>
+    </section>
+
+    <!-- ===================================================== TRACKING -->
+    <section id="tracking" class="chapter">
+      <div class="eyebrow">Vision pipeline</div>
+      <h2>Keeping person IDs</h2>
+      <p class="prose">Labels say "P1 looked at P2", so a person must keep the same ID for the whole video. That is the job of <code>Sort</code> (<a data-ref="sort_update"></a>), a variant of the SORT tracker. It runs in two layers:</p>
+      <ol class="prose">
+        <li><strong>Internal trackers.</strong> Each has a Kalman filter that predicts where the head box will be. Predictions are matched to detections with the Hungarian algorithm on IoU. A pair below <code>iou_threshold</code> (0.15) does not match, and an unmatched detection creates a new tracker with a new internal ID.</li>
+        <li><strong>Display IDs.</strong> Because <code>num_people</code> is known, any internal ID above it is remapped to a free display ID from 1 to <code>num_people</code> (<a data-ref="reassign"></a>). A person who is lost and re-detected gets their old display ID back, as long as it is the only free one.</li>
+      </ol>
+      <div class="demo" id="demo-sort"></div>
+      <div class="callout warn">
+        <p><strong>Click order only works if every pose succeeds on the first frame.</strong> IDs are handed out in the order gazes arrive. If the second person you clicked has no pose on that frame, the third person takes ID 2. That is why step 3 of the run instructions asks you to check the numbers on the green boxes.</p>
+      </div>
+      <p class="prose">If two people are lost in the same frame, the display IDs can swap. The code has a comment admitting this. Trackers survive 1000 frames unmatched (<code>max_age</code>), and missed frames decay their velocity by <code>velocity_decay</code> so a lost box does not drift away (<a data-ref="kalman_predict"></a>).</p>
+    </section>
+
+    <!-- ===================================================== BAYES -->
+    <section id="bayes" class="chapter">
+      <div class="eyebrow">Vision pipeline</div>
+      <h2>Who is looking at whom</h2>
+      <p class="prose">This is the saliency-aware step (<a data-ref="bayes_infer"></a>). For each observer, independently, it computes a probability over who they are looking at: every other person, plus a <strong>null target</strong> that means "no one in particular". The null target is what lets the model say someone is looking at the robot or the table.</p>
+      <p class="prose" style="margin-bottom:.2rem">Bayes' rule: <code>posterior(target) ∝ likelihood(target) × prior(target)</code></p>
+      <ul class="prose">
+        <li><strong>Likelihood: does the gaze ray point there?</strong> A Gaussian on the horizontal and vertical angle between the ray and the target's head. The two widths differ: <code>sigma_x</code> is wide because horizontal gaze estimates are looser, and <code>sigma_y</code> is narrow. Anything behind the observer scores about zero. The null target has a constant likelihood.</li>
+        <li><strong>Prior: is this target worth looking at?</strong> People look at whoever is moving, which is the "saliency" part. Each target's score is <code>omega_base + omega_motion × motion</code>, and the null target's is <code>omega_null</code>. A softmax turns the scores into probabilities.</li>
+      </ul>
+      <p class="prose">Drag people around, drag the arrow to aim the observer, and change the settings. Every number is computed by a verified port of the C++.</p>
+      <div class="demo" id="demo-bayes"></div>
+      <div data-snippet="bayes_scores"></div>
+      <h3>What to know when tuning</h3>
+      <ul class="prose">
+        <li><strong><code>is_looking</code> is just the most likely target.</strong> There is no threshold, so <code>is_looking</code> is true for a target with a posterior of 0.34 if nothing beats it.</li>
+        <li><strong>Defaults are not what runs.</strong> <code>tracker_settings.ini</code> overrides the defaults in <a data-ref="bayes_cfg"></a>. Load both presets in the demo to compare them.</li>
+        <li><strong>Motion is a one-frame measure:</strong> how far the head box moved in its crop since the last frame, divided by the box diagonal and clamped to 0–1 (<a data-ref="bayes_motion"></a>).</li>
+        <li><strong>With only one person detected there are no edges at all</strong> (<a data-ref="bayes_early"></a>). The evaluator counts those frames as <code>no_prediction</code>.</li>
+      </ul>
+    </section>
+
+    <!-- ===================================================== STREAM -->
+    <section id="stream" class="chapter">
+      <div class="eyebrow">Output and testing</div>
+      <h2>The gRPC stream</h2>
+      <p class="prose">The contract between the two processes is one file: <code>src/c_impl/proto/rapport.proto</code>. The app is the gRPC <em>server</em>, on <code>127.0.0.1:50051</code> by default, and the client calls a single server-streaming method. You can change the address with the <code>RAPPORT_GRPC_TARGET</code> environment variable.</p>
+      <div class="cols even">
+        <div data-snippet="proto_update"></div>
+        <div data-snippet="proto_edge"></div>
+      </div>
+      <p class="prose">Each frame with at least two detected people gives one edge per ordered pair: three people means six edges. <code>probability</code> values for one observer add up to at most 1, and the remainder is the probability of looking at no one.</p>
+      <div class="demo" id="demo-proto"></div>
+
+      <h3>The queue drops old frames on purpose</h3>
+      <p class="prose">The tracker must never block on a slow client. So <code>publish()</code> pushes into a bounded queue (256 by default, set with <code>RAPPORT_GRPC_MAX_QUEUED</code>), and when it is full the oldest frame is thrown away.</p>
+      <div data-snippet="svc_publish"></div>
+      <p class="prose">That has a consequence for testing: dropped frames are never scored. The evaluator detects jumps in <code>frame_index</code> and warns you. Try to make it happen:</p>
+      <div class="demo" id="demo-queue"></div>
+      <ul class="prose">
+        <li><strong>One queue, one reader.</strong> Two clients compete for frames, so each sees a partial stream. Run one client at a time.</li>
+        <li><strong>The stream has no end marker.</strong> At the end of the video the tracker simply stops publishing. You end the run with Ctrl+C or by closing the app.</li>
+      </ul>
+    </section>
+
+    <!-- ===================================================== EVALUATION -->
+    <section id="evaluation" class="chapter">
+      <div class="eyebrow">Output and testing</div>
+      <h2>Scoring against labels</h2>
+      <p class="prose">Labels come as time intervals in a CSV: <code>start_time, end_time, duration, label_type</code>, where <code>label_type</code> looks like <code>P1GazeP2</code> or <code>P1GazeRobot</code>. Times are in seconds of video, and are matched to each frame's <code>playback_timestamp_ns</code>.</p>
+      <p class="prose">At each frame, each labelled person has a set of <strong>accepted targets</strong> (<a data-ref="labels_accepted"></a>). The rules matter, because they decide what the score means:</p>
+      <div class="table-scroll"><table>
+        <tr><th>Situation</th><th>How it is scored</th><th>Why</th></tr>
+        <tr><td><code>P1GazeRobot</code></td><td>Accepted target is <code>no_person</code></td><td>The model has no robot class, so "no one" is the right answer</td></tr>
+        <tr><td>No label active for a person</td><td>That person is skipped for that frame</td><td>The annotators made no claim, so it cannot count as right or wrong</td></tr>
+        <tr><td>Two labels overlap</td><td>Either target counts as correct</td><td>Annotators disagree or the person changed target mid-interval</td></tr>
+        <tr><td>After the last label</td><td>Nothing is scored</td><td>The pilot labels end at 305 s, and the video runs to 646 s</td></tr>
+        <tr><td>Person labelled but no edges</td><td>Counted as <code>no_prediction</code>, kept out of accuracy</td><td>Tracking failure is reported apart from gaze error</td></tr>
+      </table></div>
+      <p class="prose">Click the prediction row below to change what the model said, and watch each output change: the per-frame score, and the mismatch events written to <code>report_N.jsonl</code>.</p>
+      <div class="demo" id="demo-eval"></div>
+
+      <h3>Reading a report</h3>
+      <p class="prose">The client prints this at the end of a run and saves it as <code>report_N_summary.json</code>. Read it in this order:</p>
+      <ol class="prose">
+        <li><strong>Warnings.</strong> Jumps in <code>frame_index</code> mean frames were dropped or the video was seeked, so the scores may be off. If every probability is 0, your <code>tracker.exe</code> is out of date.</li>
+        <li><strong>Accuracy against the baseline.</strong> The report also prints what always answering "no one" would score. Compare with that, not with 0, because no one is a common answer.</li>
+        <li><strong>Per-person accuracy.</strong> One person far below the others often points to a tracking or crop problem, not the gaze model. Check <code>no_prediction</code> too.</li>
+        <li><strong>The confusion matrix.</strong> A strong diagonal means the IDs line up. A busy <code>no_person</code> row means looks at the robot are being given to people, which is what <code>omega_null</code> and <code>likelihood_null_baseline</code> control.</li>
+        <li><strong>Edge metrics.</strong> AUROC, average precision and Brier score judge the probabilities themselves. The threshold table shows what a cut-off other than the most likely target would do.</li>
+      </ol>
+    </section>
+
+    <!-- ===================================================== CODE -->
+    <section id="code" class="chapter">
+      <div class="eyebrow">Reference</div>
+      <h2>Code explorer</h2>
+      <p class="prose">Every source file in <code>c_impl</code> and <code>python_client</code>, with headers covered alongside their <code>.cpp</code> file. Search by file name or by what you want to change. Links open the code on GitHub at the commit this guide describes.</p>
+      <div class="demo" id="demo-tree"></div>
+    </section>
+
+    <!-- ===================================================== RECIPES -->
+    <section id="recipes" class="chapter">
+      <div class="eyebrow">Reference</div>
+      <h2>How do I…</h2>
+      <p class="prose">The usual edits touch several files that must stay in step.</p>
+
+      <details class="item"><summary>Add a field to the stream</summary><div>
+        <ol>
+          <li>Add it to <a data-ref="proto_edge">rapport.proto</a> with a new field number. Never reuse or renumber one, and note that numbers 100–199 on <code>PipelineUpdate</code> are reserved.</li>
+          <li>Add it to the matching struct in <a data-ref="types">domain/types.h</a>.</li>
+          <li>Fill it in where the data is made, for example <a data-ref="bayes_infer">GazeBayesMapper::infer</a>.</li>
+          <li>Copy it onto the message in <a data-ref="svc_map">mapToPipelineUpdate</a>. <strong>This is the step people forget:</strong> it compiles without it and sends 0.</li>
+          <li>Run <code>python python_client\build_scripts\proto_codegen.py</code>, commit the regenerated stubs, and rebuild <code>tracker.exe</code>.</li>
+          <li>Read it in <a data-ref="eval_handle">GazeEvaluator.handle_update</a>.</li>
+        </ol>
+      </div></details>
+
+      <details class="item"><summary>Add a tunable setting</summary><div>
+        <ol>
+          <li>Add it to <a data-ref="tracker_config">TrackerConfig</a> with a default, or to <a data-ref="bayes_cfg">GazeBayesConfig</a> for the gaze model.</li>
+          <li>Save it in <a data-ref="save_defaults">saveDefaults</a> and load it in <a data-ref="load_defaults">loadDefaultsInto</a>.</li>
+          <li>Add a widget in <a data-ref="show_settings">showSettings</a>, and read it in <a data-ref="settings_collect">collectConfig</a>. Without that second step the dialog shows the value but changing it does nothing.</li>
+          <li>Pipeline code reads it through <code>tracker_.getConfig()</code>. Settings that go to another object, like the IoU threshold, must also be forwarded in <code>VisionPipeline::setConfig</code>.</li>
+        </ol>
+      </div></details>
+
+      <details class="item"><summary>Tune the gaze model</summary><div>
+        <ol>
+          <li>Open the Settings dialog in the app and change the gaze values. Click <strong>Set as Default</strong> to write them to <code>tracker_settings.ini</code>.</li>
+          <li>Keep every other setting and the click order the same, and run the full labelled section.</li>
+          <li>Compare two <code>report_N_summary.json</code> files: overall accuracy, then per-person accuracy, then the confusion matrix. Use AUROC to tell whether the probabilities themselves improved.</li>
+        </ol>
+        <p>The settings live in one ini file per build folder, so note them with your results. A Debug and a Release build do not share them.</p>
+      </div></details>
+
+      <details class="item"><summary>Swap or add a model</summary><div>
+        <ol>
+          <li>Load it in <a data-ref="models_path">OPNetTracker::initialize</a>, following the other models.</li>
+          <li>Write a small wrapper class in <a data-ref="localizer_run">model_core.cpp</a>. Check its expected input size, channel order and normalisation: each existing model differs.</li>
+          <li>Call it from <a data-ref="detect">detect()</a>. That runs per person, so per-frame cost multiplies by <code>num_people</code>.</li>
+        </ol>
+      </div></details>
+
+      <details class="item"><summary>Track a different number of people</summary><div>
+        <p>Change <strong>Num People</strong> in Settings. <code>Sort</code>, re-selection and display IDs all follow <code>num_people</code>. Set it before opening a video, because selection asks for exactly that many clicks. Labels must use IDs that match, or pass <code>--id-map</code>.</p>
+      </div></details>
+
+      <details class="item"><summary>Add an evaluation metric</summary><div>
+        <ol>
+          <li>Collect what you need per frame in <a data-ref="eval_handle">GazeEvaluator.handle_update</a>.</li>
+          <li>Compute it in <code>summary()</code> or <a data-ref="eval_edges">_edge_metrics</a>, which puts it into the JSON file.</li>
+          <li>Add a line in <a data-ref="eval_format">format_summary</a> to print it.</li>
+        </ol>
+      </div></details>
+
+      <details class="item"><summary>Debug when the client shows nothing</summary><div>
+        <ol>
+          <li>The client prints <code>Waiting for tracker updates</code> and stays quiet until you click Start Tracking. It prints progress every 300 frames.</li>
+          <li>If every probability is 0, your <code>tracker.exe</code> predates the proto change: rebuild it. The report warns about this.</li>
+          <li>If the app seems healthy but the client gets nothing, check that port 50051 is free. If it is taken, the app shows a "gRPC stream unavailable" warning at startup.</li>
+          <li>If accuracy is near chance on every person, suspect the ID mapping before the model. A confusion matrix without a strong diagonal is the sign.</li>
+          <li>If accuracy is poor and the IDs are right, check that the labels and video share a time base. Timestamps come straight from the video file (<a data-ref="video_ts"></a>).</li>
+        </ol>
+      </div></details>
+    </section>
+
+    <!-- ===================================================== EDGES -->
+    <section id="edges" class="chapter">
+      <div class="eyebrow">Reference</div>
+      <h2>Sharp edges</h2>
+      <p class="prose">Things that have caught people out, or that look like open issues. <span class="tag trap">Trap</span> means it will surprise you. <span class="tag bug">Likely bug</span> means behaviour that looks unintended. <span class="tag debt">Debt</span> means something worth cleaning up.</p>
+      <div class="table-scroll"><table>
+        <tr><th>Type</th><th>What</th><th>Where</th></tr>
+        <tr><td><span class="tag bug">Likely bug</span></td><td><code>needs_yolo_update</code> is never initialised, and <code>need_yolo_update()</code> returns it as a <code>float</code>.</td><td><a data-ref="needs_yolo_decl"></a></td></tr>
+        <tr><td><span class="tag bug">Likely bug</span></td><td><strong>Boxes across the panorama seam are not handled.</strong> A head crossing the left and right edge yields a box nearly as wide as the frame, which can break IoU matching.</td><td><a data-ref="seam"></a></td></tr>
+        <tr><td><span class="tag bug">Likely bug</span></td><td>Motion spikes when YOLO re-aims a camera, because the head box jumps inside the new crop, not because the person moved. This briefly raises that person's prior.</td><td><a data-ref="bayes_motion"></a></td></tr>
+        <tr><td><span class="tag trap">Trap</span></td><td><strong>Model paths use the working directory</strong>, two levels up. Launch from anywhere else and the app exits at startup.</td><td><a data-ref="models_path"></a></td></tr>
+        <tr><td><span class="tag trap">Trap</span></td><td><code>gaze_analysis.csv</code> is overwritten at every launch, in whatever folder you start from.</td><td><a data-ref="csv_open"></a></td></tr>
+        <tr><td><span class="tag trap">Trap</span></td><td>The wrong <code>onnxruntime.dll</code> crashes at startup with an access violation (exit code 0xC0000005). Keep the 1.22.1 DLL beside the program.</td><td>Setup</td></tr>
+        <tr><td><span class="tag trap">Trap</span></td><td>Seeking with the slider publishes frames out of order, and the evaluator counts them again. Do not seek during a scored run.</td><td><a data-ref="seek"></a></td></tr>
+        <tr><td><span class="tag trap">Trap</span></td><td>Non-2:1 video is rejected silently: selection shows no boxes and nothing is processed.</td><td><a data-ref="aspect_check"></a></td></tr>
+        <tr><td><span class="tag trap">Trap</span></td><td>Yaw, pitch and position are truncated to integers in <code>Pose</code>, so results move in whole degrees and centimetres.</td><td><a data-ref="pose_out"></a></td></tr>
+        <tr><td><span class="tag trap">Trap</span></td><td><code>frame_index</code> starts at 2. The first frame is used for selection and never processed.</td><td><a data-ref="open_video"></a></td></tr>
+        <tr><td><span class="tag trap">Trap</span></td><td>Internal tracker IDs come from a static counter, reset only when <code>Sort</code> is built. Opening a second video in one session continues counting, so restart the app between scored runs.</td><td><a data-ref="kf_count"></a></td></tr>
+        <tr><td><span class="tag debt">Debt</span></td><td>The comment on the eye-weight thresholds says 12% and 25%, while the constants are 20 and 40.</td><td><a data-ref="conf_comment"></a></td></tr>
+        <tr><td><span class="tag debt">Debt</span></td><td><code>MismatchDurationGuard</code> is unused, and <code>pandas</code> is in requirements but never imported.</td><td><a data-ref="cli_guard"></a></td></tr>
+        <tr><td><span class="tag debt">Debt</span></td><td>No automated tests live in the repo. Evaluation runs are currently the regression check.</td><td></td></tr>
+      </table></div>
+    </section>
+
+    <!-- ===================================================== GLOSSARY -->
+    <section id="glossary" class="chapter">
+      <div class="eyebrow">Reference</div>
+      <h2>Glossary</h2>
+      <div class="table-scroll"><table>
+        <tr><th>Term</th><th>Meaning here</th></tr>
+        <tr><td>Equirectangular</td><td>The 2:1 panorama format. Pixel x is longitude and pixel y is latitude.</td></tr>
+        <tr><td>Perspective view / crop</td><td>The 640×480 image rendered by a <code>PanoViewer</code> for one person.</td></tr>
+        <tr><td>ROI</td><td>Region of interest: the box around a face inside a crop.</td></tr>
+        <tr><td>Gaze ray</td><td>A head position plus a unit direction, in world coordinates. <code>PanoViewer::gaze</code> holds one per person.</td></tr>
+        <tr><td>Observer / target</td><td>The person whose gaze is being explained, and a candidate for what they are looking at.</td></tr>
+        <tr><td>Null target</td><td>The "no one" outcome of the gaze model. Scored against Robot labels.</td></tr>
+        <tr><td>Prior, likelihood, posterior</td><td>Before seeing the gaze ray, how much the ray supports a target, and the final combined probability.</td></tr>
+        <tr><td>Saliency</td><td>Here, the idea that moving people attract gaze. It enters through <code>omega_motion</code>.</td></tr>
+        <tr><td>Edge</td><td>One ordered pair (from, to) in a frame, with an angle, a flag and a probability.</td></tr>
+        <tr><td>IoU</td><td>Intersection over union: overlap between two boxes, from 0 to 1.</td></tr>
+        <tr><td>Selection mode</td><td>The paused state where you click people to track. Also triggered when tracking is lost.</td></tr>
+        <tr><td>Display ID</td><td>The stable 1 to <code>num_people</code> ID shown on boxes and sent in the stream.</td></tr>
+        <tr><td>AUROC</td><td>The chance a true edge gets a higher probability than a false one. 0.5 is random and 1 is perfect.</td></tr>
+        <tr><td>Brier score</td><td>Mean squared error of the probabilities. Lower is better.</td></tr>
+      </table></div>
+
+      <footer class="site">
+        <p>This guide describes commit <a id="commit-link" href="#"></a>. Code links are pinned to that commit, so they will not drift, but the code may have moved on. The demos use JavaScript ports of the project's maths, compared with the real C++ on randomised inputs by <code>tools/port_check</code>. The source for this site is on the <code>gh-pages</code> branch.</p>
+      </footer>
+    </section>
+  </div></main>
+</div>
+
+<script src="assets/js/refs.js"></script>
+<script src="assets/js/ui.js"></script>
+<script src="assets/js/model.js"></script>
+<script src="assets/js/demo-flow.js"></script>
+<script src="assets/js/demo-vision.js"></script>
+<script src="assets/js/demo-tracking.js"></script>
+<script src="assets/js/demo-bayes.js"></script>
+<script src="assets/js/demo-output.js"></script>
+<script src="assets/js/demo-code.js"></script>
+<script>
+  UI.boot();
+  var commit = document.getElementById("commit-link");
+  commit.textContent = REPO.commit.slice(0, 7);
+  commit.href = REPO.url + "/commit/" + REPO.commit;
+</script>
+</body>
+</html>

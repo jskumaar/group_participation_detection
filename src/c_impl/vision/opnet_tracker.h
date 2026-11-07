@@ -71,7 +71,7 @@ class OPNetTracker {
         RawPose transform_to_world_pose(const cv::Quatf &face_rotation, const cv::Point2f& face_xy, float face_size);
         void yolo_scale(cv::Mat& img);
         std::vector<cv::Rect> yolo_unscale(std::vector<Reframer::DetectedPeople> &detections);
-        std::optional<Pose> detect(FaceRoiState& roi_state);
+        std::optional<Pose> detect(const cv::Mat& frame_bgr, FaceRoiState& roi_state);
         cv::Mat grayscale;
         Ort::Env env{nullptr};
         Ort::MemoryInfo allocator_info{nullptr};

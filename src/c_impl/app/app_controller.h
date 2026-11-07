@@ -28,6 +28,9 @@ public:
     TrackerConfig getTrackerConfig() const { return vision_.getConfig(); }
     void applyTrackerConfig(const TrackerConfig& cfg);
 
+    /** Empty when the gRPC stream started, otherwise a message for the user. */
+    QString grpcError() const { return grpcError_; }
+
 signals:
     void statusTextChanged(const QString& text);
     void fpsTextChanged(const QString& text);
@@ -64,6 +67,7 @@ private:
     pipelines::VisionPipeline vision_;
     io::CsvGazeWriter csvWriter_;
     std::unique_ptr<io::GrpcPipelinePublisher> pipelinePublisher_;
+    QString grpcError_;
 
     bool showVideo_ = true;
     bool showVTK_ = true;

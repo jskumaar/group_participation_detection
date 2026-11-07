@@ -1,5 +1,7 @@
 #include "app/app_controller.h"
 
+#include <QDebug>
+
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -43,7 +45,12 @@ AppController::AppController(QObject* parent)
     csvWriter_.open("gaze_analysis.csv");
     vision_.setConfig(vision_.getConfig());
     pipelinePublisher_ = createGrpcStream();
-    pipelinePublisher_->start();
+    if (!pipelinePublisher_->start()) {
+        grpcError_ = QString("Could not start the gRPC stream on %1. The port may be in use, for example "
+                             "by another tracker.exe. Tracking will work, but no client will receive results.")
+            .arg(QString::fromStdString(pipelinePublisher_->endpoint()));
+        qWarning().noquote() << grpcError_;
+    }
 
     emit statusTextChanged("Ready");
     emit fpsTextChanged("FPS: 0");

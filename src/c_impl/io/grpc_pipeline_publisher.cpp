@@ -21,10 +21,16 @@ bool GrpcPipelinePublisher::start() {
     }
 
     grpc::ServerBuilder builder;
-    builder.AddListeningPort(endpoint_, grpc::InsecureServerCredentials());
+    // selected_port stays 0 if the endpoint could not be bound, even when a server is returned.
+    int selected_port = 0;
+    builder.AddListeningPort(endpoint_, grpc::InsecureServerCredentials(), &selected_port);
     builder.RegisterService(&service_);
     server_ = builder.BuildAndStart();
-    if (!server_) {
+    if (!server_ || selected_port == 0) {
+        if (server_) {
+            server_->Shutdown();
+            server_.reset();
+        }
         running_.store(false);
         return false;
     }

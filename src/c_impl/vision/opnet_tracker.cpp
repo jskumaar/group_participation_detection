@@ -264,9 +264,9 @@ cv::Rect_<T> ewa_filter(const cv::Rect_<T>& last, const cv::Rect_<T>& current, f
  std::optional<Pose> OPNetTracker::run(cv::Mat frame, int fov, FaceRoiState& roi_state){
      prepare_input_image(frame);
      intrinsics_ = make_intrinsics(frame, fov);
-     return detect(roi_state);
+     return detect(frame, roi_state);
  }
-std::optional<Pose> OPNetTracker::detect(FaceRoiState& roi_state){
+std::optional<Pose> OPNetTracker::detect(const cv::Mat& frame_bgr, FaceRoiState& roi_state){
    if (!roi_state.last_localizer_roi || !roi_state.last_roi || iou(*roi_state.last_localizer_roi, *roi_state.last_roi) < 0.25f) {
        
        qDebug() << "[OPNet] no tracked face, running localizer";
@@ -311,7 +311,8 @@ std::optional<Pose> OPNetTracker::detect(FaceRoiState& roi_state){
    roi_state.last_roi = ewa_filter(*roi_state.last_roi, new_roi, kRoiFilterAlpha);
 
    const cv::Rect2f l2cs_roi = expand_roi_centered(face->box, config_.roi_zoom);
-    auto gaze = l2cs_estimator_->run(grayscale, l2cs_roi);
+    // L2CS is an RGB model, unlike the grayscale localizer and pose network.
+    auto gaze = l2cs_estimator_->run(frame_bgr, l2cs_roi);
     if (!gaze.has_value()) {
         return std::nullopt;
     }

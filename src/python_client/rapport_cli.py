@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from rapport_server import serve_forever
+from grpc_client import serve_forever
 
 
 class MismatchDurationGuard:
@@ -32,9 +32,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
     serve_forever(
         host=args.host,
         port=args.port,
-        ground_truth_csv=args.ground_truth_csv,
-        person_id_map=args.person_id_map,
-        mismatch_log_dir=args.mismatch_log_dir,
+        ground_truth_csv=args.ground_truth,
+        person_id_map=args.id_map,
+        mismatch_log_dir=args.log_path,
     )
     return 0
 
@@ -71,11 +71,11 @@ def cmd_replay(args: argparse.Namespace) -> int:
         start_s = start_ns / 1e9
         end_s = end_ns / 1e9
         duration_s = duration_ns / 1e9
-        labels = entry.get("labels") or []
-        labels_text = ",".join(labels) if labels else "-"
+        kinds = entry.get("kinds") or []
+        kinds_text = ",".join(kinds) if kinds else "-"
         print(
             "t={start:.3f}s-{end:.3f}s (dur={dur:.3f}s) frames={fs}-{fe} "
-            "edge {src}->{dst} labels={labels}".format(
+            "edge {src}->{dst} kinds={kinds} mean_p={probability}".format(
                 start=start_s,
                 end=end_s,
                 dur=duration_s,
@@ -83,7 +83,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
                 fe=entry.get("end_frame_index", -1),
                 src=entry.get("from", -1),
                 dst=entry.get("to", -1),
-                labels=labels_text,
+                kinds=kinds_text,
+                probability=entry.get("mean_probability", "-"),
             )
         )
         shown += 1
@@ -109,20 +110,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--ground-truth",
         help=(
             "CSV/TSV with columns: start_time, end_time, label_type "
-            "(e.g. P1GazeP2, P3GazeRobot). Required to log mismatches."
+            "(e.g. P1GazeP2, P3GazeRobot). Required to score the stream."
         ),
     )
     serve_parser.add_argument(
         "--id-map",
         help=(
             "Optional mapping from label IDs to stream person_id values, "
-            "format: 1:0,2:1,3:2"
+            "format: 1:2,2:3,3:1. Default is identity."
         ),
     )
     serve_parser.add_argument(
         "--log-path",
         default="logs",
-        help="Output directory for per-stream JSONL mismatch logs (report_N.jsonl)",
+        help=(
+            "Output directory for per-stream mismatch logs (report_N.jsonl) "
+            "and scores (report_N_summary.json)"
+        ),
     )
     serve_parser.set_defaults(func=cmd_serve)
 

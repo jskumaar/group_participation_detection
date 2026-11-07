@@ -9,6 +9,7 @@
 #include <opencv2/core/quaternion.hpp>
 #include <cmath>
 #include <deque>
+#include <optional>
 #include <vector>
 
 namespace vision {
@@ -20,6 +21,15 @@ cv::Vec3f dir_from_yaw_pitch(float yaw_rad, float pitch_rad);
 void yaw_pitch_deg_from_rot_mat(const cv::Matx33f &R, float &yaw_deg, float &pitch_deg);
 
 } // namespace vision
+
+/**
+ * Face ROI tracked across frames. Coordinates are relative to one PanoViewer's
+ * perspective crop, so each tracked person needs their own state.
+ */
+struct FaceRoiState {
+    std::optional<cv::Rect2f> last_roi;
+    std::optional<cv::Rect2f> last_localizer_roi;
+};
 
 class PanoViewer{
     public:

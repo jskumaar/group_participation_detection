@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rrapport.proto\x12\x07rapport\x1a\x1bgoogle/protobuf/empty.proto\"*\n\x07Vector3\x12\t\n\x01x\x18\x01 \x01(\x02\x12\t\n\x01y\x18\x02 \x01(\x02\x12\t\n\x01z\x18\x03 \x01(\x02\"f\n\nGazeSample\x12\x11\n\tperson_id\x18\x01 \x01(\x05\x12 \n\x06origin\x18\x02 \x01(\x0b\x32\x10.rapport.Vector3\x12#\n\tdirection\x18\x03 \x01(\x0b\x32\x10.rapport.Vector3\"f\n\x0fInteractionEdge\x12\x16\n\x0e\x66rom_person_id\x18\x01 \x01(\x05\x12\x14\n\x0cto_person_id\x18\x02 \x01(\x05\x12\x11\n\tangle_deg\x18\x03 \x01(\x02\x12\x12\n\nis_looking\x18\x04 \x01(\x08\"\x9f\x01\n\x0ePipelineUpdate\x12\x13\n\x0b\x66rame_index\x18\x01 \x01(\x04\x12\x1d\n\x15playback_timestamp_ns\x18\x02 \x01(\x04\x12\"\n\x05gazes\x18\x03 \x03(\x0b\x32\x13.rapport.GazeSample\x12.\n\x0cinteractions\x18\x04 \x03(\x0b\x32\x18.rapport.InteractionEdgeJ\x05\x08\x64\x10\xc8\x01\x32[\n\rRapportStream\x12J\n\x15StreamPipelineUpdates\x12\x16.google.protobuf.Empty\x1a\x17.rapport.PipelineUpdate0\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rrapport.proto\x12\x07rapport\x1a\x1bgoogle/protobuf/empty.proto\"*\n\x07Vector3\x12\t\n\x01x\x18\x01 \x01(\x02\x12\t\n\x01y\x18\x02 \x01(\x02\x12\t\n\x01z\x18\x03 \x01(\x02\"f\n\nGazeSample\x12\x11\n\tperson_id\x18\x01 \x01(\x05\x12 \n\x06origin\x18\x02 \x01(\x0b\x32\x10.rapport.Vector3\x12#\n\tdirection\x18\x03 \x01(\x0b\x32\x10.rapport.Vector3\"{\n\x0fInteractionEdge\x12\x16\n\x0e\x66rom_person_id\x18\x01 \x01(\x05\x12\x14\n\x0cto_person_id\x18\x02 \x01(\x05\x12\x11\n\tangle_deg\x18\x03 \x01(\x02\x12\x12\n\nis_looking\x18\x04 \x01(\x08\x12\x13\n\x0bprobability\x18\x05 \x01(\x02\"\x9f\x01\n\x0ePipelineUpdate\x12\x13\n\x0b\x66rame_index\x18\x01 \x01(\x04\x12\x1d\n\x15playback_timestamp_ns\x18\x02 \x01(\x04\x12\"\n\x05gazes\x18\x03 \x03(\x0b\x32\x13.rapport.GazeSample\x12.\n\x0cinteractions\x18\x04 \x03(\x0b\x32\x18.rapport.InteractionEdgeJ\x05\x08\x64\x10\xc8\x01\x32[\n\rRapportStream\x12J\n\x15StreamPipelineUpdates\x12\x16.google.protobuf.Empty\x1a\x17.rapport.PipelineUpdate0\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -37,9 +37,9 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_GAZESAMPLE']._serialized_start=99
   _globals['_GAZESAMPLE']._serialized_end=201
   _globals['_INTERACTIONEDGE']._serialized_start=203
-  _globals['_INTERACTIONEDGE']._serialized_end=305
-  _globals['_PIPELINEUPDATE']._serialized_start=308
-  _globals['_PIPELINEUPDATE']._serialized_end=467
-  _globals['_RAPPORTSTREAM']._serialized_start=469
-  _globals['_RAPPORTSTREAM']._serialized_end=560
+  _globals['_INTERACTIONEDGE']._serialized_end=326
+  _globals['_PIPELINEUPDATE']._serialized_start=329
+  _globals['_PIPELINEUPDATE']._serialized_end=488
+  _globals['_RAPPORTSTREAM']._serialized_start=490
+  _globals['_RAPPORTSTREAM']._serialized_end=581
 # @@protoc_insertion_point(module_scope)

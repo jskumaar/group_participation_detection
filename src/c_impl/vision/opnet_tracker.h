@@ -56,7 +56,7 @@ class OPNetTracker {
     public:
         OPNetTracker();
         ~OPNetTracker() = default;
-        std::optional<Pose> run(cv::Mat frame, int fov);
+        std::optional<Pose> run(cv::Mat frame, int fov, FaceRoiState& roi_state);
         std::vector<cv::Rect> run_yolo(const cv::Mat& frame);
 
         void setConfig(const TrackerConfig& config);
@@ -71,7 +71,7 @@ class OPNetTracker {
         RawPose transform_to_world_pose(const cv::Quatf &face_rotation, const cv::Point2f& face_xy, float face_size);
         void yolo_scale(cv::Mat& img);
         std::vector<cv::Rect> yolo_unscale(std::vector<Reframer::DetectedPeople> &detections);
-        std::optional<Pose> detect();
+        std::optional<Pose> detect(FaceRoiState& roi_state);
         cv::Mat grayscale;
         Ort::Env env{nullptr};
         Ort::MemoryInfo allocator_info{nullptr};
@@ -92,7 +92,4 @@ class OPNetTracker {
 
         inline static constexpr int INPUT_IMG_WIDTH = 640;
         inline static constexpr int INPUT_IMG_HEIGHT = 640;
-
-        std::optional<cv::Rect2f> last_roi_;
-        std::optional<cv::Rect2f> last_localizer_roi_;
 };

@@ -155,10 +155,10 @@ domain::VisionFrameResult VisionPipeline::processFrame(const cv::Mat& panoFrame,
     // Pose + gaze per track
     std::vector<PanoViewer::gaze> gazes;
     cv::Mat perspective_view;
-    for (const auto& track : tracks_) {
+    for (auto& track : tracks_) {
         if (!track.viewer) continue;
         perspective_view = track.viewer->generatePerspectiveView(shifted);
-        auto pose = tracker_.run(perspective_view, static_cast<int>(track.viewer->getFOV()));
+        auto pose = tracker_.run(perspective_view, static_cast<int>(track.viewer->getFOV()), track.face_roi);
         if (!pose.has_value()) continue;
 
         PanoViewer::gaze g = track.viewer->addGaze(

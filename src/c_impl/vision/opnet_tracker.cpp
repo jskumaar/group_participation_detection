@@ -261,45 +261,45 @@ cv::Rect_<T> ewa_filter(const cv::Rect_<T>& last, const cv::Rect_<T>& current, f
      cv::cvtColor(img, grayscale, cv::COLOR_BGR2GRAY);
  }
  
- std::optional<Pose> OPNetTracker::run(cv::Mat frame, int fov){
+ std::optional<Pose> OPNetTracker::run(cv::Mat frame, int fov, FaceRoiState& roi_state){
      prepare_input_image(frame);
      intrinsics_ = make_intrinsics(frame, fov);
-     return detect();
+     return detect(roi_state);
  }
-std::optional<Pose> OPNetTracker::detect(){
-   if (!last_localizer_roi_ || !last_roi_ || iou(*last_localizer_roi_, *last_roi_) < 0.25f) {
+std::optional<Pose> OPNetTracker::detect(FaceRoiState& roi_state){
+   if (!roi_state.last_localizer_roi || !roi_state.last_roi || iou(*roi_state.last_localizer_roi, *roi_state.last_roi) < 0.25f) {
        
        qDebug() << "[OPNet] no tracked face, running localizer";
        auto [p, rect] = localizer_->run(grayscale);
 
-       if (last_roi_ && iou(rect, *last_roi_) >= 0.25f && p > config_.localizer_threshold) {
-           last_localizer_roi_ = rect;
+       if (roi_state.last_roi && iou(rect, *roi_state.last_roi) >= 0.25f && p > config_.localizer_threshold) {
+           roi_state.last_localizer_roi = rect;
        }
        else if (p > config_.localizer_threshold && rect.height > 32 && rect.width > 32) {
-           last_localizer_roi_ = rect;
-           last_roi_ = rect;
+           roi_state.last_localizer_roi = rect;
+           roi_state.last_roi = rect;
        }
        else {
-           last_roi_.reset();
-           last_localizer_roi_.reset();
+           roi_state.last_roi.reset();
+           roi_state.last_localizer_roi.reset();
        }
    }
 
-   if (!last_roi_) {
+   if (!roi_state.last_roi) {
        needs_yolo_update = true;
        return std::nullopt;
    }
 
    const cv::Rect current_roi(
-       static_cast<int>(last_roi_->x),
-       static_cast<int>(last_roi_->y),
-       static_cast<int>(last_roi_->width),
-       static_cast<int>(last_roi_->height)
+       static_cast<int>(roi_state.last_roi->x),
+       static_cast<int>(roi_state.last_roi->y),
+       static_cast<int>(roi_state.last_roi->width),
+       static_cast<int>(roi_state.last_roi->height)
    );
 
    auto face = poseestimator_->run(grayscale, current_roi);
    if (!face.has_value()) {
-       last_roi_.reset();
+       roi_state.last_roi.reset();
        needs_yolo_update = true;
        return std::nullopt;
    }
@@ -308,7 +308,7 @@ std::optional<Pose> OPNetTracker::detect(){
    constexpr float kRoiFilterAlpha = 0.5f;
 
    cv::Rect2f new_roi = expand_roi_centered(face->box, kPoseRoiZoom);
-   last_roi_ = ewa_filter(*last_roi_, new_roi, kRoiFilterAlpha);
+   roi_state.last_roi = ewa_filter(*roi_state.last_roi, new_roi, kRoiFilterAlpha);
 
    const cv::Rect2f l2cs_roi = expand_roi_centered(face->box, config_.roi_zoom);
     auto gaze = l2cs_estimator_->run(grayscale, l2cs_roi);

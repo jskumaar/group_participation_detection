@@ -15,6 +15,7 @@ class Sort {
 public:
     struct Track {
         std::shared_ptr<PanoViewer> viewer = nullptr;
+        FaceRoiState face_roi;  // starts empty: a new viewer means a new crop
     };
 
     Sort(int max_age = 1000, double iou_threshold = 0.15);

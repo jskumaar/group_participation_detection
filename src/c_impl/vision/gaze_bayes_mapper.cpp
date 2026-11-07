@@ -213,24 +213,26 @@ std::vector<domain::InteractionPair> GazeBayesMapper::infer(
         for (float v : unnormalized) posteriorSum += v;
         if (posteriorSum <= 1e-12f) posteriorSum = 1.f;
 
+        std::vector<float> posteriors(numTargets, 0.f);
         int bestTargetId = -1;
         float bestPosterior = -1.f;
         for (size_t t = 0; t < numTargets; ++t) {
-            const float posterior = unnormalized[t] / posteriorSum;
-            if (posterior > bestPosterior) {
-                bestPosterior = posterior;
+            posteriors[t] = unnormalized[t] / posteriorSum;
+            if (posteriors[t] > bestPosterior) {
+                bestPosterior = posteriors[t];
                 bestTargetId = targets[t].personId;
             }
         }
 
-        for (size_t j = 0; j < gazes.size(); ++j) {
-            if (j == i) continue;
-
+        // t = 0 is the null target; it has no edge, its posterior is 1 - sum(edges).
+        for (size_t t = 1; t < numTargets; ++t) {
+            const auto& targetGaze = gazes[targets[t].gazeIndex];
             interactions.push_back(domain::InteractionPair{
                 observer.personID,
-                gazes[j].personID,
-                angleBetweenDeg(observer.direction, observer.start, gazes[j].start),
-                bestTargetId == gazes[j].personID
+                targetGaze.personID,
+                angleBetweenDeg(observer.direction, observer.start, targetGaze.start),
+                bestTargetId == targetGaze.personID,
+                posteriors[t]
             });
         }
     }

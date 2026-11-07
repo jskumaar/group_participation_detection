@@ -14,6 +14,7 @@ struct InteractionPair {
     int to_person_id = -1;
     float angle_deg = 0.0f;
     bool is_looking = false;
+    float probability = 0.0f;  // Bayesian posterior P(from is looking at to)
 };
 
 struct VisionFrameResult {

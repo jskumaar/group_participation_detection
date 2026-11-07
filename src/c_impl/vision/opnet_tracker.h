@@ -1,24 +1,23 @@
 #pragma once
 
 #include <opencv2/opencv.hpp>
+#include <opencv2/core/quaternion.hpp>
 #include <onnxruntime_cxx_api.h>
-#include <iostream>
 #include <vector>
 #include <cmath>
 #include <filesystem>
 #include <optional>
 
 #include "vision/model_core.h"
+#include "vision/gaze_bayes_mapper.h"
 
 typedef struct yaw_pitch_roll {
     cv::Rect2f rect;
     int yaw;
     int pitch;
-    int roll;
     int x;
     int y;
     int z;
-    float confidence;
 } Pose;
 
 typedef struct RawPose {
@@ -39,15 +38,13 @@ struct TrackerConfig {
     float nms_threshold = 0.3f;
     float confidence_threshold = 0.5f;
     float localizer_threshold = 0.5f;
+    float roi_zoom = 1.25f;
 
     float velocity_decay = 0.2f;
     float iou_threshold = 0.15f;
     int num_people = 3;
-    float max_angle_deg = 20.0f;
 
-    float eye_boost_knee = 15.0f;
-    float eye_boost_steepness = 0.10f;
-    float eye_boost_max = 0.7f;
+    vision::GazeBayesConfig gaze_bayes;
 
     int yolo_check_interval = 30;
     float head_height_ratio = 0.13f;
@@ -59,30 +56,29 @@ class OPNetTracker {
     public:
         OPNetTracker();
         ~OPNetTracker() = default;
-        std::optional<Pose> run(cv::Mat frame, int fov);
-        std::vector<cv::Rect> run_yolo(cv::Mat frame);
+        std::optional<Pose> run(cv::Mat frame, int fov, FaceRoiState& roi_state);
+        std::vector<cv::Rect> run_yolo(const cv::Mat& frame);
 
         void setConfig(const TrackerConfig& config);
         TrackerConfig getConfig() const { return config_; }
 
-        static int getInputHeight() { return INPUT_IMG_HEIGHT; }
         void yolo_updated() { needs_yolo_update = false; }
         float need_yolo_update() { return needs_yolo_update; }
 
     private:
         bool initialize();
         void prepare_input_image(cv::Mat &img);
-        RawPose transform_to_world_pose(const cv::Quatf &face_rotation, const cv::Point2f& face_xy, const float face_size);
-        cv::Mat yolo_scale(cv::Mat& img);
+        RawPose transform_to_world_pose(const cv::Quatf &face_rotation, const cv::Point2f& face_xy, float face_size);
+        void yolo_scale(cv::Mat& img);
         std::vector<cv::Rect> yolo_unscale(std::vector<Reframer::DetectedPeople> &detections);
-        std::optional<Pose> detect();
+        std::optional<Pose> detect(FaceRoiState& roi_state);
         cv::Mat grayscale;
         Ort::Env env{nullptr};
         Ort::MemoryInfo allocator_info{nullptr};
         std::optional<Localizer> localizer_;
         std::optional<PoseEstimator> poseestimator_;
+        std::optional<L2CSEstimator> l2cs_estimator_;
         std::optional<Reframer> reframer_;
-        std::optional<cv::Rect2f> last_roi;
         std::array<cv::Mat,2> downsized_original_images_ = {};
         CamIntrinsics intrinsics_;
         float resizeScales;
@@ -91,8 +87,9 @@ class OPNetTracker {
 
         bool needs_yolo_update;
         TrackerConfig config_;
+        cv::Mat yolo_pano_work_;
+        cv::Mat yolo_net_input_;
 
         inline static constexpr int INPUT_IMG_WIDTH = 640;
         inline static constexpr int INPUT_IMG_HEIGHT = 640;
 };
-

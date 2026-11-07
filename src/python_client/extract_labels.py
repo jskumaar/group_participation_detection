@@ -9,7 +9,8 @@ from typing import Dict, Iterable, List, Optional, Set, TextIO, Tuple
 
 
 InteractionPair = Tuple[int, int]
-MismatchRecord = Tuple[Optional[InteractionPair], Optional[InteractionPair]]
+# (actual_pair, expected_pair, posterior of the edge being compared)
+MismatchRecord = Tuple[Optional[InteractionPair], Optional[InteractionPair], float]
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,12 @@ class GroundTruthGazeComparator:
       - start_time
       - end_time
       - label_type
+
+    At any time a labeled person has a set of accepted targets: person ids,
+    or None for GazeRobot (the model's "looking at no one" outcome). The set
+    has more than one entry only where annotations overlap. A person with no
+    active interval is unlabeled at that time and is not scored, which covers
+    annotation gaps and everything after the last label.
     """
 
     #src and dst are named capturing groups (?P)
@@ -37,6 +44,8 @@ class GroundTruthGazeComparator:
         self._person_id_map = dict(person_id_map or {})
         self._intervals: List[LabelInterval] = []
         self._load()
+        self.sources: Set[int] = {i.source_person_id for i in self._intervals}
+        self.labels_end_s: float = max((i.end_s for i in self._intervals), default=0.0)
 
     def _map_person_id(self, label_person_id: int) -> int:
         return int(self._person_id_map.get(label_person_id, label_person_id))
@@ -70,11 +79,9 @@ class GroundTruthGazeComparator:
                 if end_s < start_s:
                     raise ValueError(f"Invalid interval with end_time < start_time: {row}")
                 source_person_id, target_person_id = self._parse_label(row["label_type"])
-                if target_person_id is None:
-                    # Ignore robot-directed labels
-                    continue
                 source_person_id = self._map_person_id(source_person_id)
-                target_person_id = self._map_person_id(target_person_id)
+                if target_person_id is not None:
+                    target_person_id = self._map_person_id(target_person_id)
                 intervals.append(
                     LabelInterval(
                         start_s=start_s,
@@ -86,32 +93,40 @@ class GroundTruthGazeComparator:
 
             self._intervals = intervals
 
-    def _expected_pairs_for_timestamp(self, timestamp_s: float) -> Dict[int, InteractionPair]:
-        # One expected target per source at any given time; first interval encountered wins.
-        expected_by_src: Dict[int, InteractionPair] = {}
+    def accepted_targets(self, timestamp_s: float) -> Dict[int, Set[Optional[int]]]:
+        """Accepted targets per labeled person; unlabeled people are absent."""
+        accepted_by_src: Dict[int, Set[Optional[int]]] = {}
         for interval in self._intervals:
             if interval.start_s <= timestamp_s < interval.end_s:
-                src = interval.source_person_id
-                expected_by_src.setdefault(src, (src, interval.target_person_id))
-        return expected_by_src
+                accepted_by_src.setdefault(interval.source_person_id, set()).add(
+                    interval.target_person_id
+                )
+        return accepted_by_src
 
     def compare_update(self, update) -> List[MismatchRecord]:
         timestamp_s = float(int(update.playback_timestamp_ns)) / 1e9
-        expected_by_src = self._expected_pairs_for_timestamp(timestamp_s)
+        accepted_by_src = self.accepted_targets(timestamp_s)
+        predicted_by_src = {
+            int(edge.from_person_id): int(edge.to_person_id)
+            for edge in update.interactions
+            if edge.is_looking
+        }
 
         mismatches: List[MismatchRecord] = []
         for edge in update.interactions:
             src = int(edge.from_person_id)
             dst = int(edge.to_person_id)
-            is_looking = edge.is_looking
-
-            pair = (src, dst)
-            expected_pair = expected_by_src.get(src)
-            if is_looking == (pair == expected_pair):
+            accepted = accepted_by_src.get(src)
+            if accepted is None or predicted_by_src.get(src) in accepted:
                 continue
 
-            actual_pair = pair if is_looking else None
-            mismatches.append((actual_pair, expected_pair))
+            pair = (src, dst)
+            if edge.is_looking:
+                expected_people = [target for target in accepted if target is not None]
+                expected_pair = (src, min(expected_people)) if expected_people else None
+                mismatches.append((pair, expected_pair, edge.probability))
+            elif dst in accepted:
+                mismatches.append((None, pair, edge.probability))
 
         return mismatches
 
@@ -131,6 +146,8 @@ class _ActiveMismatch:
     start_frame: int
     last_ts_ns: int
     last_frame: int
+    probability_sum: float
+    frame_count: int
 
 
 class UniqueMismatchLogger:
@@ -173,9 +190,11 @@ class UniqueMismatchLogger:
 
         #(false,false) never happens because of the way the ground truth is constructed
         current_states: Dict[Tuple[int, int], Tuple[bool, bool]] = {}
-        for actual_pair, expected_pair in mismatches:
+        current_probabilities: Dict[Tuple[int, int], float] = {}
+        for actual_pair, expected_pair, probability in mismatches:
             pair = actual_pair if actual_pair is not None else expected_pair
             current_states[pair] = (actual_pair is not None, expected_pair is not None)
+            current_probabilities[pair] = probability
 
 
         # flush any active mismatches that are no longer present in the current states
@@ -193,11 +212,15 @@ class UniqueMismatchLogger:
                     start_frame=frame_index,
                     last_ts_ns=ts_ns,
                     last_frame=frame_index,
+                    probability_sum=current_probabilities[pair],
+                    frame_count=1,
                 )
             else:
                 active.states.add(state)
                 active.last_ts_ns = ts_ns
                 active.last_frame = frame_index
+                active.probability_sum += current_probabilities[pair]
+                active.frame_count += 1
 
     def _flush(self, pair: Tuple[int, int]) -> None:
         active = self._activeMismatches.pop(pair, None)
@@ -213,6 +236,7 @@ class UniqueMismatchLogger:
             "start_frame_index": active.start_frame,
             "end_frame_index": active.last_frame,
             "kinds": labels,
+            "mean_probability": round(active.probability_sum / active.frame_count, 4),
         }
         self._fh.write(json.dumps(entry) + "\n")
         self._fh.flush()

@@ -25,9 +25,6 @@ public:
     void setShowVideo(bool show) { showVideo_ = show; }
     void setShowVTK(bool show) { showVTK_ = show; }
 
-    bool isPlaying() const { return isPlaying_; }
-    bool isSelecting() const { return isSelecting_; }
-
     TrackerConfig getTrackerConfig() const { return vision_.getConfig(); }
     void applyTrackerConfig(const TrackerConfig& cfg);
 
@@ -44,8 +41,6 @@ signals:
     void overlaysReady(const std::vector<VideoWidget::PersonBox>& overlays);
     void gazesReady(const std::vector<PanoViewer::gaze>& gazes);
     void interactionTextChanged(const QString& text);
-
-    void selectingChanged(bool selecting);
 
 public slots:
     void openVideoPath(const QString& path);

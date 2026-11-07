@@ -13,9 +13,11 @@ if str(GENERATED_DIR) not in sys.path:
     sys.path.insert(0, str(GENERATED_DIR))
 
 import rapport_pb2_grpc
+from evaluation import GazeEvaluator
 from extract_labels import GroundTruthGazeComparator, UniqueMismatchLogger
 
 REPORT_SUFFIX = "jsonl"
+PROGRESS_EVERY_FRAMES = 300
 
 
 def parse_person_id_map(mapping_text: Optional[str]) -> Dict[int, int]:
@@ -60,32 +62,55 @@ def _build_comparator(
 def run_client_once(
     host: str = "127.0.0.1",
     port: int = 50051,
-    ground_truth_csv: Optional[str] = None,
-    person_id_map: Optional[str] = None,
+    ground_truth: Optional[GroundTruthGazeComparator] = None,
     mismatch_log_dir: str = "logs/mismatch_logs",
 ) -> None:
     endpoint = f"{host}:{port}"
-    ground_truth = _build_comparator(
-        ground_truth_csv=ground_truth_csv,
-        person_id_map=person_id_map,
-    )
+    # Created on the first update so that waiting for the tracker leaves no empty reports.
     mismatch_logger: Optional[UniqueMismatchLogger] = None
-    if ground_truth is not None:
-        log_path = next_report_path(Path(mismatch_log_dir))
-        mismatch_logger = UniqueMismatchLogger(log_path)
-        print(f"Logging unique mismatches to {log_path}")
+    evaluator: Optional[GazeEvaluator] = None
+    announced_labels_end = False
 
     try:
         with grpc.insecure_channel(endpoint) as channel:
             stub = rapport_pb2_grpc.RapportStreamStub(channel)
-            updates = stub.StreamPipelineUpdates(empty_pb2.Empty())
+            # wait_for_ready holds the call open until the tracker is listening.
+            updates = stub.StreamPipelineUpdates(empty_pb2.Empty(), wait_for_ready=True)
+            print(f"Waiting for tracker updates on {endpoint} ...")
             for update in updates:
-                if mismatch_logger is not None and ground_truth is not None:
-                    mismatch_logger.handle_update(update, ground_truth)
+                if ground_truth is None:
+                    continue
+
+                if mismatch_logger is None:
+                    log_path = next_report_path(Path(mismatch_log_dir))
+                    mismatch_logger = UniqueMismatchLogger(log_path)
+                    evaluator = GazeEvaluator(ground_truth)
+                    print(f"Logging unique mismatches to {log_path}")
+
+                mismatch_logger.handle_update(update, ground_truth)
+                evaluator.handle_update(update)
+
+                if evaluator.frames_received % PROGRESS_EVERY_FRAMES == 0:
+                    print(evaluator.progress_line())
+
+                timestamp_s = update.playback_timestamp_ns / 1e9
+                if not announced_labels_end and timestamp_s >= ground_truth.labels_end_s:
+                    announced_labels_end = True
+                    print(
+                        f"Passed the last label at {ground_truth.labels_end_s:.2f}s, "
+                        "later frames are not scored. Press Ctrl+C for the final report."
+                    )
     finally:
         if mismatch_logger is not None:
             mismatch_logger.close()
             print(f"Closed mismatch log {mismatch_logger.output_path}")
+        if evaluator is not None:
+            summary_path = mismatch_logger.output_path.with_name(
+                f"{mismatch_logger.output_path.stem}_summary.json"
+            )
+            evaluator.write_summary(summary_path)
+            print(evaluator.format_summary())
+            print(f"Wrote summary to {summary_path}")
 
 
 def serve_forever(
@@ -95,14 +120,18 @@ def serve_forever(
     person_id_map: Optional[str] = None,
     mismatch_log_dir: str = "logs/mismatch_logs",
 ) -> None:
+    # Outside the retry loop: a bad labels file should fail once, not every second.
+    ground_truth = _build_comparator(
+        ground_truth_csv=ground_truth_csv,
+        person_id_map=person_id_map,
+    )
     try:
         while True:
             try:
                 run_client_once(
                     host=host,
                     port=port,
-                    ground_truth_csv=ground_truth_csv,
-                    person_id_map=person_id_map,
+                    ground_truth=ground_truth,
                     mismatch_log_dir=mismatch_log_dir,
                 )
             except grpc.RpcError as exc:

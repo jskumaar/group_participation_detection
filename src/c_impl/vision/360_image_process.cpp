@@ -85,43 +85,73 @@ cv::Mat PanoViewer::generatePerspectiveView(const cv::Mat& pano) {
         buildRemapTables(pano.cols, pano.rows);
         needs_rebuild = false;
     }
-    cv::Mat output;
-    cv::remap(pano, output, map_x, map_y, cv::INTER_LINEAR, cv::BORDER_WRAP);
-    return output;
+    if (perspective_output_.rows != output_height || perspective_output_.cols != output_width ||
+        perspective_output_.type() != pano.type())
+    {
+        perspective_output_.create(output_height, output_width, pano.type());
+    }
+    cv::remap(pano, perspective_output_, map_x, map_y, cv::INTER_LINEAR, cv::BORDER_WRAP);
+    return perspective_output_;
 }
 
-static inline cv::Vec3f unit(const cv::Vec3f& v) {
-    float n = cv::norm(v);
-    return (n > 0.f) ? (v / n) : cv::Vec3f(0,0,0);
+namespace vision {
+
+namespace {
+
+cv::Vec3f unit(const cv::Vec3f& v) {
+    const float n = static_cast<float>(cv::norm(v));
+    return (n > 0.f) ? (v / n) : cv::Vec3f(0, 0, 0);
 }
 
-static inline cv::Vec3f dir_from_yaw_pitch(float yaw, float pitch) {
-    float cp = std::cos(pitch), sp = std::sin(pitch);
-    float cy = std::cos(yaw),   sy = std::sin(yaw);
-    return unit(cv::Vec3f(sy * cp,
-                          sp,
-                          cy * cp
-    ));
+} // namespace
+
+cv::Vec3f dir_from_yaw_pitch(float yaw, float pitch) {
+    const float cp = std::cos(pitch);
+    const float sp = std::sin(pitch);
+    const float cy = std::cos(yaw);
+    const float sy = std::sin(yaw);
+    return unit(cv::Vec3f(sy * cp, sp, cy * cp));
 }
+
+void yaw_pitch_deg_from_rot_mat(const cv::Matx33f &R, float &yaw_deg, float &pitch_deg)
+{
+    const auto fwd = R.col(2);
+    const float yaw = std::atan2(fwd(0), fwd(2));
+    const float pitch = std::asin(std::max(-1.f, std::min(1.f, fwd(1))));
+    constexpr float kRadToDeg = 180.f / static_cast<float>(M_PI);
+    yaw_deg = yaw * kRadToDeg;
+    pitch_deg = pitch * kRadToDeg;
+}
+
+} // namespace vision
+
+namespace {
+
+cv::Vec3f unit_vec3f(const cv::Vec3f& v) {
+    const float n = static_cast<float>(cv::norm(v));
+    return (n > 0.f) ? (v / n) : cv::Vec3f(0, 0, 0);
+}
+
+} // namespace
 
 cv::Vec3f global_gaze_from_panorama(float yaw, float pitch,
                                     cv::Vec3f cam_to_person,
                                     cv::Vec3f world_up = cv::Vec3f(0.f,1.f,0.f)) {
 
-    cv::Vec3f forward = unit(-cam_to_person);
+    cv::Vec3f forward = unit_vec3f(-cam_to_person);
 
     if (std::abs(forward.dot(world_up)) > 0.999f) {
         world_up = cv::Vec3f(0.f, 0.f, 1.f);
         if (std::abs(forward.dot(world_up)) > 0.999f)
             world_up = cv::Vec3f(1.f, 0.f, 0.f);
     }
-    cv::Vec3f right = unit(world_up.cross(forward));
-    cv::Vec3f up    = unit(forward.cross(right));
+    cv::Vec3f right = unit_vec3f(world_up.cross(forward));
+    cv::Vec3f up    = unit_vec3f(forward.cross(right));
 
-    cv::Vec3f local = dir_from_yaw_pitch(yaw, pitch);
+    cv::Vec3f local = vision::dir_from_yaw_pitch(yaw, pitch);
 
     cv::Vec3f global = right * local[0] + up * local[1] + forward * local[2];
-    return unit(global);
+    return unit_vec3f(global);
 }
 
 PanoViewer::gaze PanoViewer::addGaze(float cam_yaw, float cam_pitch, float cam_fov, float yaw, float pitch, cv::Vec3f position) {
@@ -145,7 +175,7 @@ PanoViewer::gaze PanoViewer::addGaze(float cam_yaw, float cam_pitch, float cam_f
     worldPos[1] = v1y;
     worldPos[2] = -sy * v1x + cy * v1z;
 
-    cv::Vec3f start_direction = dir_from_yaw_pitch(cam_yaw * DEG_TO_RAD, cam_pitch * DEG_TO_RAD);
+    cv::Vec3f start_direction = vision::dir_from_yaw_pitch(cam_yaw * DEG_TO_RAD, cam_pitch * DEG_TO_RAD);
 
     new_gaze.direction = global_gaze_from_panorama(yaw * DEG_TO_RAD, pitch * DEG_TO_RAD, start_direction);
     new_gaze.start = cv::Point3f(worldPos[0], worldPos[1], worldPos[2]);
@@ -175,37 +205,6 @@ float PanoViewer::getYaw() {
 }
 float PanoViewer::getPitch() {
     return pitch;
-}
-
-bool PanoViewer::isLookingAt(PanoViewer::gaze gaze, cv::Point3f facePos, float maxAngleDeg)
-{
-    cv::Vec3f v = facePos - gaze.start;
-    float dist = std::sqrt(v.dot(v));
-
-    cv::Vec3f vdir = v / dist;
-    float cosTheta = vdir.dot(gaze.direction);
-
-    float maxAngleRad = maxAngleDeg * static_cast<float>(M_PI / 180.0);
-    float cosMax = std::cos(maxAngleRad);
-
-    return cosTheta >= cosMax;
-}
-
-void PanoViewer::gaze_analysis(std::vector<gaze>& gazes) {
-    for (size_t i = 0; i < gazes.size(); ++i) {
-        for (size_t j = 0; j < gazes.size(); ++j) {
-            if (i == j) continue;
-
-            const auto& gi = gazes[i];
-            const auto& gj = gazes[j];
-
-            if (isLookingAt(gi, gj.start, max_angle_threshold)) {
-                std::cout << "Person " << gi.personID
-                    << " is looking at person " << gj.personID
-                    << std::endl;
-            }
-        }
-    }
 }
 
 float PanoViewer::computeFOVForPersonBox(const cv::Rect& box, int pano_height, int h_star_pixels, float r_head, float deg_min, float deg_max) const {

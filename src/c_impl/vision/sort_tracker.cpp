@@ -6,8 +6,8 @@
 
 #define M_PI 3.14159265358979323846
 
-Sort::Sort(int max_age, int min_hits, double iou_threshold)
-    : frame_count_(0), max_age_(max_age), min_hits_(min_hits), iou_threshold_(iou_threshold) {
+Sort::Sort(int max_age, double iou_threshold)
+    : max_age_(max_age), iou_threshold_(iou_threshold) {
     KalmanTracker::kf_count = 0;
 }
 
@@ -62,14 +62,10 @@ std::vector<PanoViewer::gaze> Sort::update(const std::vector<PanoViewer::gaze>& 
     }
 
     std::set<int> unmatchedDetections;
-    std::set<int> unmatchedTrajectories;
     std::vector<cv::Point> matchedPairs;
 
     if (trackNum == 0) {
         for (unsigned j = 0; j < detNum; ++j) unmatchedDetections.insert(j);
-    }
-    if (detNum == 0) {
-        for (unsigned i = 0; i < trackNum; ++i) unmatchedTrajectories.insert(i);
     }
 
     if (trackNum > 0 && detNum > 0) {
@@ -82,15 +78,10 @@ std::vector<PanoViewer::gaze> Sort::update(const std::vector<PanoViewer::gaze>& 
                                 matchedItems.begin(), matchedItems.end(),
                                 std::inserter(unmatchedDetections, unmatchedDetections.begin()));
         }
-        else if (detNum < trackNum) {
-            for (unsigned i = 0; i < trackNum; ++i)
-                if (assignment[i] == -1) unmatchedTrajectories.insert(i);
-        }
 
         for (unsigned i = 0; i < trackNum; ++i) {
             if (assignment[i] == -1) continue;
             if (1 - iouMatrix[i][assignment[i]] < iou_threshold_) {
-                unmatchedTrajectories.insert(i);
                 unmatchedDetections.insert(assignment[i]);
             } else {
                 matchedPairs.push_back(cv::Point((int)i, assignment[i]));

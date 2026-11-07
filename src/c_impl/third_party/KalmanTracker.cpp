@@ -93,13 +93,6 @@ void KalmanTracker::resetVelocity()
 	kf.statePost.at<float>(6, 0) = 0; // vs
 }
 
-// Return the current state vector
-StateType KalmanTracker::get_state()
-{
-	Mat s = kf.statePost;
-	return get_rect_xysr(s.at<float>(0, 0), s.at<float>(1, 0), s.at<float>(2, 0), s.at<float>(3, 0));
-}
-
 // Convert bounding box from [cx,cy,s,r] to [x,y,w,h] style.
 StateType KalmanTracker::get_rect_xysr(float cx, float cy, float s, float r)
 {

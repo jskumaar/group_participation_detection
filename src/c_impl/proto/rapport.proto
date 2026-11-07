@@ -21,6 +21,9 @@ message InteractionEdge {
   int32 to_person_id = 2;
   float angle_deg = 3;
   bool is_looking = 4;
+  // Bayesian posterior P(from is looking at to). The remainder of
+  // 1 - sum(probability over a person's outgoing edges) is P(looking at no one).
+  float probability = 5;
 }
 
 message PipelineUpdate {

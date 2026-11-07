@@ -1,111 +1,137 @@
-# Group Participation Detection (C++ Implementation)
+# Group Participation Detection (C++)
 
-This project implements a 360-degree panoramic video gaze tracking system. It processes panoramic videos to track people and estimate their gaze direction to determine when individuals are looking at each other, facilitating group participation detection. The application provides a Qt-based GUI for video playback and gaze visualization (including VTK-based 3D visualization).
+Qt desktop app for 360° panoramic video: head detection, SORT tracking, gaze estimation (ONNX), and VTK-based gaze visualization. Optional gRPC streaming publishes pipeline updates (`proto/rapport.proto`).
 
-## Dependencies
+## Prerequisites (Windows)
 
-Build and run require the following. Paths shown are those used in `CMakeLists.txt`; adjust them if your installations are elsewhere.
+| Dependency | Notes | Default path in `CMakeLists.txt` |
+|------------|-------|----------------------------------|
+| **Visual Studio 2022** | Desktop development with C++ workload | — |
+| **CMake** | 3.10+ | — |
+| **OpenCV** | 4.x, x64 MSVC build | `C:/opencv/build` |
+| **Qt 6** | Widgets module, MSVC 2022 64-bit | `C:/Qt/6.10.1/msvc2022_64` |
+| **VTK** | 9.x, built for same MSVC/Qt | `C:/VTK/install/lib/cmake/vtk-9.5` |
+| **ONNX Runtime** | MSVC x64; headers + import lib in repo | `onnx/include`, `onnx/lib` |
+| **vcpkg** | `grpc` and `protobuf` for C++ | Auto-used if `VCPKG_ROOT` is set (e.g. `C:/vcpkg`) |
 
-| Dependency | Version / Notes | CMake path (if set) |
-|------------|-----------------|---------------------|
-| **CMake** | 3.10 or higher | — |
-| **C++ compiler** | C++17 (e.g. MSVC 2022 64-bit for Windows) | — |
-| **OpenCV** | Required for image processing | `C:/opencv/build` |
-| **ONNX Runtime** | Required for neural network inference | Headers: `onnx/include`, libs: `onnx/lib` (under project root) |
-| **Qt** | Qt 6, Widgets component | `C:/Qt/6.10.1/msvc2022_64` |
-| **VTK** | Required for 3D gaze visualization | `C:/VTK/install/lib/cmake/vtk-9.5` |
-| **Gnuplot** | Optional; for standalone 3D visualization scripts | Ensure `gnuplot` is in your PATH if used |
+Edit `CMakeLists.txt` if OpenCV, Qt, or VTK live elsewhere (`OpenCV_DIR`, `CMAKE_PREFIX_PATH`, `VTK_DIR`).
 
-### ONNX Runtime setup
+### vcpkg (gRPC / Protobuf)
 
-Place ONNX Runtime headers and libraries under the project root:
+If CMake cannot find `protobuf` or `gRPC`:
 
-- `src/c_impl/onnx/include/` — headers  
-- `src/c_impl/onnx/lib/` — libraries (e.g. `onnxruntime.lib` for linking; you may need `onnxruntime.dll` next to the executable at run time)
-
-Use the same ABI as your compiler (e.g. 64-bit MSVC build on Windows).
-
-### Models
-
-Create a `models/` directory in the project root (`src/c_impl/models/`) and add these ONNX models:
-
-- `head-localizer.onnx`
-- `head-pose-0.3-big-quantized.onnx`
-- `yolo11n.onnx`
-
-## Folder structure
-
-```text
-src/c_impl/
-├── models/                 # ONNX models (see above)
-├── onnx/                   # ONNX Runtime include/ and lib/
-├── sort-cpp/               # SORT tracking implementation
-├── 360_image_process.cpp  # 360° image processing
-├── 360_image_process.h
-├── CMakeLists.txt
-├── main.cpp                # Application entry (Qt)
-├── mainwindow.cpp / .h     # Main window UI
-├── videowidget.cpp / .h    # Video display widget
-├── gazevisualizer.cpp / .h # Gaze visualization (VTK)
-├── model_core.cpp / .h     # Model inference
-├── tracker.cpp / .h        # Object tracking
-├── SORT.cpp / .h           # SORT tracker wrapper
-└── ...
+```powershell
+git clone https://github.com/Microsoft/vcpkg.git C:\vcpkg
+C:\vcpkg\bootstrap-vcpkg.bat
+C:\vcpkg\vcpkg install grpc:x64-windows protobuf:x64-windows
 ```
 
-## Build instructions
+Ensure `VCPKG_ROOT` points at your vcpkg root (CMake integrates via `%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake` when the toolchain is active).
 
-1. **Configure paths (optional)**  
-   If your OpenCV, Qt, or VTK are not at the default locations, edit `CMakeLists.txt`:
-   - `OpenCV_DIR` (e.g. `C:/opencv/build`)
-   - `CMAKE_PREFIX_PATH` for Qt (e.g. `C:/Qt/6.10.1/msvc2022_64`)
-   - `VTK_DIR` (e.g. `C:/VTK/install/lib/cmake/vtk-9.5`)
+### ONNX Runtime
 
-2. **Create and enter a build directory**
-   ```bash
-   mkdir build
-   cd build
+Shipped under `onnx/`:
+
+- `onnx/include/` — headers  
+- `onnx/lib/onnxruntime.lib` — link library  
+
+At run time, copy `onnxruntime.dll` from the [ONNX Runtime release](https://github.com/microsoft/onnxruntime/releases) (same version/ABI as the bundled lib) next to `tracker.exe`, or add its directory to `PATH`.
+
+### ONNX models
+
+Place these under `models/` (paths are resolved relative to the executable directory):
+
+| File | Purpose |
+|------|---------|
+| `head-localizer.onnx` | Head localization |
+| `head-pose-0.3-big-quantized.onnx` | Head pose |
+| `L2CSNet_gaze360.onnx` | Gaze (L2CS-Net) |
+| `yolo11n.onnx` | Person detection |
+
+## Project layout
+
+```text
+c_impl/
+├── app/              # Qt UI (main, mainwindow, videowidget, gazevisualizer)
+├── vision/           # Models, tracking, 360° processing
+├── pipelines/        # Vision pipeline orchestration
+├── media/            # Video input
+├── io/               # CSV export, gRPC publisher/service
+├── proto/            # rapport.proto
+├── third_party/      # SORT (Kalman + Hungarian)
+├── models/           # ONNX weights (not all committed — see table above)
+├── onnx/             # ONNX Runtime SDK (include + lib)
+├── CMakeLists.txt
+└── build/            # Out-of-source build (created by you)
+```
+
+## Build
+
+All commands assume PowerShell and that you start in `src/c_impl`.
+
+### Option A — Command line (CMake + MSVC)
+
+```powershell
+cd C:\Python\Research\group_participation_detection\src\c_impl
+mkdir build -Force
+cd build
+cmake -G "Visual Studio 17 2022" -A x64 ..
+cmake --build . --config Release
+```
+
+Output: `build\Release\tracker.exe`
+
+### Option B — Visual Studio (CMake integration)
+
+1. Open the folder `src/c_impl` in Visual Studio (**File → Open → CMake…**), or open `CMakeLists.txt`.
+2. Select configuration **x64-Release** (see `CMakeSettings.json`; uses Ninja + RelWithDebInfo).
+3. **Build → Build All**.
+
+Output is under `out/build/x64-Release/` (or the path shown in the CMake build log).
+
+### Clean reconfigure
+
+```powershell
+Remove-Item -Recurse -Force build
+mkdir build; cd build
+cmake -G "Visual Studio 17 2022" -A x64 ..
+cmake --build . --config Release
+```
+
+## Run
+
+1. **Working directory / models**  
+   The app loads ONNX files from `<exe_dir>/models/`. Either:
+   - Copy or symlink `models/` into `build\Release\` next to `tracker.exe`, or  
+   - Run from `c_impl` with `models/` in the expected place (e.g. set Visual Studio debugging working directory to `$(ProjectDir)` / `c_impl`).
+
+2. **Deploy Qt DLLs** (if the app fails to start with missing Qt plugins):
+
+   ```powershell
+   C:\Qt\6.10.1\msvc2022_64\bin\windeployqt.exe .\build\Release\tracker.exe
    ```
 
-3. **Configure with CMake**
-   ```bash
-   cmake ..
-   ```
-   On Windows with Visual Studio generator you may use:
-   ```bash
-   cmake -G "Visual Studio 17 2022" -A x64 ..
+3. **Other DLLs**  
+   Ensure OpenCV, VTK, and ONNX Runtime DLLs are on `PATH` or beside `tracker.exe`.
+
+4. **Launch**
+
+   ```powershell
+   .\build\Release\tracker.exe
    ```
 
-4. **Build**
-   ```bash
-   cmake --build . --config Release
-   ```
-   Or open the generated solution (e.g. `build/tracker.sln`) in Visual Studio and build from there.
+   Use the GUI to open a 360° video file.
 
-## How to run
+## Troubleshooting
 
-1. **Run from the build directory (recommended)**  
-   From the `build` folder:
-   ```bash
-   .\Release\tracker.exe
-   ```
-   Or:
-   ```bash
-   .\x64\Release\tracker.exe
-   ```
-   (Exact path depends on your CMake generator; check under `build/` for `tracker.exe`.)
-
-2. **Required at run time**
-   - **Models**: The executable must find the `models/` folder. Either run from a directory where `models/` is in the expected place (e.g. copy or symlink `src/c_impl/models` next to `tracker.exe` or set the working directory to `src/c_impl`), or ensure the code is configured to look for `models/` via an absolute path or environment variable.
-   - **DLLs**: Qt and VTK (and optionally OpenCV/ONNX Runtime if built as DLLs) must be on the PATH or next to `tracker.exe`. You can use `windeployqt` for Qt:
-     ```bash
-     C:\Qt\6.10.1\msvc2022_64\bin\windeployqt.exe .\Release\tracker.exe
-     ```
-   - **Video path**: Open your panoramic video file from the application UI, or set the default path in the code if applicable.
-
-3. **Running from Visual Studio**  
-   Set the project’s working directory to `src/c_impl` (or the folder that contains `models/`) so that relative paths to `models/` resolve correctly.
+| Symptom | What to check |
+|---------|----------------|
+| `Cannot find source file ... KalmanTracker.cpp` | SORT sources must be `third_party/KalmanTracker.cpp` and `Hungarian.cpp` (included in repo). |
+| `find_package(protobuf)` / `gRPC` fails | Install via vcpkg; set `VCPKG_ROOT`. |
+| Missing ONNX models at runtime | Copy `models/*.onnx` next to the executable under `models/`. |
+| `onnxruntime.dll` not found | Copy DLL from ONNX Runtime release into `Release/`. |
+| Qt platform plugin errors | Run `windeployqt` on `tracker.exe`. |
 
 ## Usage
 
-After building and running, use the GUI to open a 360° panoramic video. The application will run head detection, tracking, and gaze estimation and show results in the video and gaze visualizer. Ensure the `models/` directory and any required DLLs are available as described above.
+Open a panoramic video in the UI. The pipeline runs detection, tracking, and gaze estimation; results appear on the video view and in the VTK gaze visualizer. CSV and gRPC outputs are handled under `io/` when enabled in the application flow.

@@ -74,6 +74,39 @@ class PoseEstimator
         bool pos_scale_uncertainty_is_matrix_ = false;
 };
 
+class L2CSEstimator
+{
+    public:
+        struct HeadPose
+        {
+            float yaw_deg = 0.f;
+            float pitch_deg = 0.f;
+            float confidence = 0.f;
+        };
+
+        L2CSEstimator(Ort::MemoryInfo &allocator_info, Ort::Session &&session);
+        std::optional<HeadPose> run(const cv::Mat &frame, const cv::Rect2f &box);
+
+    private:
+        std::optional<cv::Rect> clamp_roi_to_frame(const cv::Rect2f &box, const cv::Size &frame_size) const;
+        static float decode_angle_from_logits(const float *logits, size_t count, float *max_prob_out);
+        void fill_input_nchw_from_rgb(const cv::Mat &rgb_uint8);
+
+        inline static constexpr int INPUT_IMG_WIDTH = 448;
+        inline static constexpr int INPUT_IMG_HEIGHT = 448;
+        Ort::Session session_{nullptr};
+        std::string input_name_;
+        std::array<std::string, 2> output_names_;
+        std::array<const char *, 2> output_c_names_{};
+        std::array<const char *, 1> input_c_names_{};
+        cv::Mat resized_rgb_;
+        cv::Mat roi_work_;
+        cv::Mat float_rgb_;
+        std::array<cv::Mat, 3> ch_planes_{};
+        std::vector<float> input_tensor_data_;
+        Ort::Value input_val_{nullptr};
+};
+
 class Reframer
 {
     public:

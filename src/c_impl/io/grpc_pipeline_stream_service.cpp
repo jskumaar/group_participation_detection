@@ -38,6 +38,7 @@ rapport::PipelineUpdate mapToPipelineUpdate(
         outEdge->set_to_person_id(edge.to_person_id);
         outEdge->set_angle_deg(finiteOrZero(edge.angle_deg));
         outEdge->set_is_looking(edge.is_looking);
+        outEdge->set_probability(finiteOrZero(edge.probability));
     }
 
     return update;

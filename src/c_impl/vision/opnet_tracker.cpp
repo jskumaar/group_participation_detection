@@ -17,14 +17,16 @@
  
  namespace {
  
- // Lightweight models often run fastest with a small intra-op pool (2–4 threads).
- constexpr int kOrtIntraOpThreads = 4;
+ // One person per worker, each with a small intra-op pool, scales better than spreading
+ // more threads across a single inference. YOLO runs alone, so it gets more.
+ constexpr int kWorkerIntraOpThreads = 3;
+ constexpr int kYoloIntraOpThreads = 4;
  constexpr int kOrtInterOpThreads = 1;
- 
- Ort::SessionOptions makeCpuSessionOptions()
+
+ Ort::SessionOptions makeCpuSessionOptions(int intra_op_threads)
  {
      Ort::SessionOptions options;
-     options.SetIntraOpNumThreads(kOrtIntraOpThreads);
+     options.SetIntraOpNumThreads(intra_op_threads);
      options.SetInterOpNumThreads(kOrtInterOpThreads);
      options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
      options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
@@ -89,29 +91,21 @@ cv::Rect_<T> ewa_filter(const cv::Rect_<T>& last, const cv::Rect_<T>& current, f
  bool OPNetTracker::initialize() {
      try{
          env = Ort::Env(ORT_LOGGING_LEVEL_WARNING, "opnet-tracker");
-         Ort::SessionOptions session_options = makeCpuSessionOptions();
          allocator_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-         fs::path exe_dir = fs::current_path().parent_path().parent_path();
- 
- #ifdef _WIN32
-         std::wstring model_path = (exe_dir / L"models" / L"head-localizer.onnx").wstring();
-         localizer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
-         model_path = (exe_dir / L"models" / L"head-pose-0.3-big-quantized.onnx").wstring();
-         poseestimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
-         model_path = (exe_dir / L"models" / L"L2CSNet_gaze360.onnx").wstring();
-         l2cs_estimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
-         model_path = (exe_dir / L"models" / L"yolo11n.onnx").wstring();
-         reframer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options), config_.confidence_threshold, config_.nms_threshold);
- #else
-         std::string model_path = (exe_dir / "models" / "head-localizer.onnx").string();
-         localizer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
-         model_path = (exe_dir / "models" / "head-pose-0.3-big-quantized.onnx").string();
-         poseestimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
-         model_path = (exe_dir / "models" / "L2CSNet_gaze360.onnx").string();
-         l2cs_estimator_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options));
-         model_path = (exe_dir / "models" / "yolo11n.onnx").string();
-         reframer_.emplace(allocator_info, Ort::Session(env, model_path.c_str(), session_options), config_.confidence_threshold, config_.nms_threshold);
- #endif
+         const fs::path models_dir = fs::current_path().parent_path().parent_path() / "models";
+         const auto load_model = [&](const char* file_name, const Ort::SessionOptions& options) {
+             const fs::path model_path = models_dir / file_name;
+             return Ort::Session(env, model_path.c_str(), options);
+         };
+
+         const Ort::SessionOptions worker_options = makeCpuSessionOptions(kWorkerIntraOpThreads);
+         for (Worker& worker : workers_) {
+             worker.localizer.emplace(allocator_info, load_model("head-localizer.onnx", worker_options));
+             worker.pose_estimator.emplace(allocator_info, load_model("head-pose-0.3-big-quantized.onnx", worker_options));
+             worker.l2cs_estimator.emplace(allocator_info, load_model("L2CSNet_gaze360.onnx", worker_options));
+         }
+         reframer_.emplace(allocator_info, load_model("yolo11n.onnx", makeCpuSessionOptions(kYoloIntraOpThreads)),
+                           config_.confidence_threshold, config_.nms_threshold);
      }
      catch (const Ort::Exception &e)
      {
@@ -189,12 +183,12 @@ cv::Rect_<T> ewa_filter(const cv::Rect_<T>& last, const cv::Rect_<T>& current, f
      return {xpos, ypos, zpos};
  }
  
- RawPose OPNetTracker::transform_to_world_pose(const cv::Quatf &face_rotation, const cv::Point2f& face_xy, float face_size)
+ RawPose OPNetTracker::transform_to_world_pose(const Worker& worker, const cv::Quatf &face_rotation, const cv::Point2f& face_xy, float face_size)
  {
      const cv::Vec3f face_world_pos = image_to_world(
          face_xy.x, face_xy.y, face_size, config_.head_size_mm,
-         grayscale.size(),
-         intrinsics_);
+         worker.grayscale.size(),
+         worker.intrinsics);
  
      const cv::Quatf rot_correction = compute_rotation_correction(face_world_pos);
      cv::Quatf rot = rot_correction * image_to_world(face_rotation);
@@ -240,7 +234,7 @@ cv::Rect_<T> ewa_filter(const cv::Rect_<T>& last, const cv::Rect_<T>& current, f
      return {cx - 0.5f * w, cy - 0.5f * h, w, h};
  }
  
- void OPNetTracker::prepare_input_image(cv::Mat &img){
+ void OPNetTracker::prepare_input_image(Worker& worker, cv::Mat &img){
      if (img.rows*4 != img.cols*3)
      {
          img = img(make_crop_rect_for_aspect(img.size(), 4, 3));
@@ -250,27 +244,28 @@ cv::Rect_<T> ewa_filter(const cv::Rect_<T>& last, const cv::Rect_<T>& current, f
  
      if (img.cols > 640)
      {
-         cv::pyrDown(img, downsized_original_images_[0]);
-         img = downsized_original_images_[0];
+         cv::pyrDown(img, worker.downsized_images[0]);
+         img = worker.downsized_images[0];
      }
      if (img.cols > 640)
      {
-         cv::pyrDown(img, downsized_original_images_[1]);
-         img = downsized_original_images_[1];
+         cv::pyrDown(img, worker.downsized_images[1]);
+         img = worker.downsized_images[1];
      }
-     cv::cvtColor(img, grayscale, cv::COLOR_BGR2GRAY);
+     cv::cvtColor(img, worker.grayscale, cv::COLOR_BGR2GRAY);
  }
  
- std::optional<Pose> OPNetTracker::run(cv::Mat frame, int fov, FaceRoiState& roi_state){
-     prepare_input_image(frame);
-     intrinsics_ = make_intrinsics(frame, fov);
-     return detect(roi_state);
+ std::optional<Pose> OPNetTracker::run(int worker_index, cv::Mat frame, int fov, FaceRoiState& roi_state){
+     Worker& worker = workers_[worker_index];
+     prepare_input_image(worker, frame);
+     worker.intrinsics = make_intrinsics(frame, fov);
+     return detect(worker, frame, roi_state);
  }
-std::optional<Pose> OPNetTracker::detect(FaceRoiState& roi_state){
+std::optional<Pose> OPNetTracker::detect(Worker& worker, const cv::Mat& frame_bgr, FaceRoiState& roi_state){
    if (!roi_state.last_localizer_roi || !roi_state.last_roi || iou(*roi_state.last_localizer_roi, *roi_state.last_roi) < 0.25f) {
        
        qDebug() << "[OPNet] no tracked face, running localizer";
-       auto [p, rect] = localizer_->run(grayscale);
+       auto [p, rect] = worker.localizer->run(worker.grayscale);
 
        if (roi_state.last_roi && iou(rect, *roi_state.last_roi) >= 0.25f && p > config_.localizer_threshold) {
            roi_state.last_localizer_roi = rect;
@@ -297,7 +292,7 @@ std::optional<Pose> OPNetTracker::detect(FaceRoiState& roi_state){
        static_cast<int>(roi_state.last_roi->height)
    );
 
-   auto face = poseestimator_->run(grayscale, current_roi);
+   auto face = worker.pose_estimator->run(worker.grayscale, current_roi);
    if (!face.has_value()) {
        roi_state.last_roi.reset();
        needs_yolo_update = true;
@@ -311,12 +306,13 @@ std::optional<Pose> OPNetTracker::detect(FaceRoiState& roi_state){
    roi_state.last_roi = ewa_filter(*roi_state.last_roi, new_roi, kRoiFilterAlpha);
 
    const cv::Rect2f l2cs_roi = expand_roi_centered(face->box, config_.roi_zoom);
-    auto gaze = l2cs_estimator_->run(grayscale, l2cs_roi);
+    // L2CS is an RGB model, unlike the grayscale localizer and pose network.
+    auto gaze = worker.l2cs_estimator->run(frame_bgr, l2cs_roi);
     if (!gaze.has_value()) {
         return std::nullopt;
     }
 
-    const RawPose raw_pose = transform_to_world_pose(face->rotation, face->center, face->size);
+    const RawPose raw_pose = transform_to_world_pose(worker, face->rotation, face->center, face->size);
 
     float head_yaw_deg = 0.f;
     float head_pitch_deg = 0.f;

@@ -3,6 +3,8 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/quaternion.hpp>
 #include <onnxruntime_cxx_api.h>
+#include <array>
+#include <atomic>
 #include <vector>
 #include <cmath>
 #include <filesystem>
@@ -54,9 +56,17 @@ struct TrackerConfig {
 
 class OPNetTracker {
     public:
+        /** How many people can be processed at the same time. */
+        static constexpr int kWorkerCount = 3;
+
         OPNetTracker();
         ~OPNetTracker() = default;
-        std::optional<Pose> run(cv::Mat frame, int fov, FaceRoiState& roi_state);
+
+        /**
+         * Runs the per-person models on one perspective crop. Safe to call from several
+         * threads at once, as long as each thread uses a different worker_index.
+         */
+        std::optional<Pose> run(int worker_index, cv::Mat frame, int fov, FaceRoiState& roi_state);
         std::vector<cv::Rect> run_yolo(const cv::Mat& frame);
 
         void setConfig(const TrackerConfig& config);
@@ -66,26 +76,31 @@ class OPNetTracker {
         float need_yolo_update() { return needs_yolo_update; }
 
     private:
+        /** The models and buffers that a thread writes to while processing one person. */
+        struct Worker {
+            std::optional<Localizer> localizer;
+            std::optional<PoseEstimator> pose_estimator;
+            std::optional<L2CSEstimator> l2cs_estimator;
+            cv::Mat grayscale;
+            std::array<cv::Mat, 2> downsized_images = {};
+            CamIntrinsics intrinsics;
+        };
+
         bool initialize();
-        void prepare_input_image(cv::Mat &img);
-        RawPose transform_to_world_pose(const cv::Quatf &face_rotation, const cv::Point2f& face_xy, float face_size);
+        void prepare_input_image(Worker& worker, cv::Mat &img);
+        RawPose transform_to_world_pose(const Worker& worker, const cv::Quatf &face_rotation, const cv::Point2f& face_xy, float face_size);
         void yolo_scale(cv::Mat& img);
         std::vector<cv::Rect> yolo_unscale(std::vector<Reframer::DetectedPeople> &detections);
-        std::optional<Pose> detect(FaceRoiState& roi_state);
-        cv::Mat grayscale;
+        std::optional<Pose> detect(Worker& worker, const cv::Mat& frame_bgr, FaceRoiState& roi_state);
         Ort::Env env{nullptr};
         Ort::MemoryInfo allocator_info{nullptr};
-        std::optional<Localizer> localizer_;
-        std::optional<PoseEstimator> poseestimator_;
-        std::optional<L2CSEstimator> l2cs_estimator_;
+        std::array<Worker, kWorkerCount> workers_;
         std::optional<Reframer> reframer_;
-        std::array<cv::Mat,2> downsized_original_images_ = {};
-        CamIntrinsics intrinsics_;
         float resizeScales;
         int padX;
         int padY;
 
-        bool needs_yolo_update;
+        std::atomic<bool> needs_yolo_update{false};
         TrackerConfig config_;
         cv::Mat yolo_pano_work_;
         cv::Mat yolo_net_input_;

@@ -14,4 +14,4 @@ cmake -G "Visual Studio 17 2022" -A x64 ..
 cmake --build . --config Release
 ```
 
-Executable: `c_impl/build/Release/tracker.exe` (copy `models/` beside it before running).
+Executable: `c_impl/build/Release/tracker.exe`. Start it from that folder, because it finds `c_impl/models/` relative to the working directory.

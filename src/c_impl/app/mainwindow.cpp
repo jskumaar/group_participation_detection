@@ -16,6 +16,7 @@
 #include <QSettings>
 #include <QCoreApplication>
 #include <QDir>
+#include <QTimer>
 
 namespace {
 
@@ -153,6 +154,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
         if (loadDefaultsInto(savedConfig)) {
             controller_->applyTrackerConfig(savedConfig);
         }
+    }
+
+    const QString grpcError = controller_->grpcError();
+    if (!grpcError.isEmpty()) {
+        // Deferred so that the dialog opens over the visible main window.
+        QTimer::singleShot(0, this, [this, grpcError]() {
+            QMessageBox::warning(this, "gRPC stream unavailable", grpcError);
+        });
     }
 }
 

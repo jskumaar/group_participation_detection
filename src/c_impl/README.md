@@ -11,7 +11,7 @@ Qt desktop app for 360° panoramic video: head detection, SORT tracking, gaze es
 | **OpenCV** | 4.x, x64 MSVC build | `C:/opencv/build` |
 | **Qt 6** | Widgets module, MSVC 2022 64-bit | `C:/Qt/6.10.1/msvc2022_64` |
 | **VTK** | 9.x, built for same MSVC/Qt | `C:/VTK/install/lib/cmake/vtk-9.5` |
-| **ONNX Runtime** | MSVC x64; headers + import lib in repo | `onnx/include`, `onnx/lib` |
+| **ONNX Runtime** | 1.22.1, MSVC x64; not in git, see below | `onnx/include`, `onnx/lib` |
 | **vcpkg** | `grpc` and `protobuf` for C++ | Auto-used if `VCPKG_ROOT` is set (e.g. `C:/vcpkg`) |
 
 Edit `CMakeLists.txt` if OpenCV, Qt, or VTK live elsewhere (`OpenCV_DIR`, `CMAKE_PREFIX_PATH`, `VTK_DIR`).
@@ -30,16 +30,16 @@ Ensure `VCPKG_ROOT` points at your vcpkg root (CMake integrates via `%VCPKG_ROOT
 
 ### ONNX Runtime
 
-Shipped under `onnx/`:
+Not in git: `onnx/` is listed in `.gitignore`. Download the Windows x64 archive for version 1.22.1 from the [ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases) and unpack it so that these exist:
 
 - `onnx/include/` — headers  
 - `onnx/lib/onnxruntime.lib` — link library  
 
-At run time, copy `onnxruntime.dll` from the [ONNX Runtime release](https://github.com/microsoft/onnxruntime/releases) (same version/ABI as the bundled lib) next to `tracker.exe`, or add its directory to `PATH`.
+At run time, copy `onnxruntime.dll` from `onnx/lib/` next to `tracker.exe`. Adding it to `PATH` is not enough: Windows ships its own `onnxruntime.dll` in System32 and finds that one first, which crashes the app at startup with an access violation (exit code 0xC0000005).
 
 ### ONNX models
 
-Place these under `models/` (paths are resolved relative to the executable directory):
+Not in git: `models/` is listed in `.gitignore`. Place these in `c_impl/models/`. The app finds them relative to the working directory, so see [Run](#run):
 
 | File | Purpose |
 |------|---------|
@@ -59,8 +59,8 @@ c_impl/
 ├── io/               # CSV export, gRPC publisher/service
 ├── proto/            # rapport.proto
 ├── third_party/      # SORT (Kalman + Hungarian)
-├── models/           # ONNX weights (not all committed — see table above)
-├── onnx/             # ONNX Runtime SDK (include + lib)
+├── models/           # ONNX weights (not in git — see table above)
+├── onnx/             # ONNX Runtime SDK, include + lib (not in git)
 ├── CMakeLists.txt
 └── build/            # Out-of-source build (created by you)
 ```
@@ -101,9 +101,9 @@ cmake --build . --config Release
 ## Run
 
 1. **Working directory / models**  
-   The app loads ONNX files from `<exe_dir>/models/`. Either:
-   - Copy or symlink `models/` into `build\Release\` next to `tracker.exe`, or  
-   - Run from `c_impl` with `models/` in the expected place (e.g. set Visual Studio debugging working directory to `$(ProjectDir)` / `c_impl`).
+   The app loads ONNX files from `../../models/`, relative to the **working directory** and not to the executable. Start it from `build\Release` so that this resolves to `c_impl/models/`. From anywhere else it exits at startup. In Visual Studio, set the debugging working directory to `build\Release`, or to another folder two levels below `c_impl`.
+
+   The app also overwrites `gaze_analysis.csv` in the working directory at every launch.
 
 2. **Deploy Qt DLLs** (if the app fails to start with missing Qt plugins):
 
@@ -112,12 +112,13 @@ cmake --build . --config Release
    ```
 
 3. **Other DLLs**  
-   Ensure OpenCV, VTK, and ONNX Runtime DLLs are on `PATH` or beside `tracker.exe`.
+   Ensure OpenCV and VTK DLLs are on `PATH` or beside `tracker.exe`. `onnxruntime.dll` must be beside `tracker.exe`, as described under [ONNX Runtime](#onnx-runtime).
 
 4. **Launch**
 
    ```powershell
-   .\build\Release\tracker.exe
+   cd build\Release
+   .\tracker.exe
    ```
 
    Use the GUI to open a 360° video file.
@@ -128,8 +129,9 @@ cmake --build . --config Release
 |---------|----------------|
 | `Cannot find source file ... KalmanTracker.cpp` | SORT sources must be `third_party/KalmanTracker.cpp` and `Hungarian.cpp` (included in repo). |
 | `find_package(protobuf)` / `gRPC` fails | Install via vcpkg; set `VCPKG_ROOT`. |
-| Missing ONNX models at runtime | Copy `models/*.onnx` next to the executable under `models/`. |
-| `onnxruntime.dll` not found | Copy DLL from ONNX Runtime release into `Release/`. |
+| Missing ONNX models at runtime | Start the app from `build\Release`, and check that `c_impl/models/` has the files. |
+| `onnxruntime.dll` not found, or an access violation at startup | Copy `onnx/lib/onnxruntime.dll` next to `tracker.exe`. |
+| "gRPC stream unavailable" at startup | Something else is using the port, often another `tracker.exe`. Close it, or set `RAPPORT_GRPC_TARGET` to another address. |
 | Qt platform plugin errors | Run `windeployqt` on `tracker.exe`. |
 
 ## Usage

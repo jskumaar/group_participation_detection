@@ -19,6 +19,7 @@ public:
 
     bool start();
     void stop();
+    const std::string& endpoint() const { return endpoint_; }
     void publish(const domain::VisionFrameResult& result, const domain::PipelineFrameContext& context);
 
 private:
